@@ -5,8 +5,6 @@
   <img src="https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB" />
   <img src="https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white" />
   <img src="https://img.shields.io/badge/Tailwind_CSS-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white" />
-  <img src="https://img.shields.io/badge/Spring_Boot-6DB33F?style=for-the-badge&logo=springboot&logoColor=white" />
-  <img src="https://img.shields.io/badge/Java_21-ED8B00?style=for-the-badge&logo=openjdk&logoColor=white" />
   <img src="https://img.shields.io/badge/Supabase-3FCF8E?style=for-the-badge&logo=supabase&logoColor=white" />
   <img src="https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white" />
   <img src="https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white" />
@@ -14,49 +12,50 @@
   <img src="https://img.shields.io/badge/PostgreSQL-4169E1?style=for-the-badge&logo=postgresql&logoColor=white" />
 </p>
 
-Enterprise-grade fraud detection dashboard built with Next.js, Spring Boot, and Supabase, powered by the CiferAI ML model (99.93% accuracy).
+Enterprise-grade fraud detection dashboard with 26K+ synthetic transactions, real-time monitoring, and ML-powered fraud analysis (Keras + DistilBERT ensemble).
 
 ## Architecture
 
 ```
 ┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│   Next.js 16     │────▶│  Spring Boot 4    │────▶│   Supabase       │
-│   (Frontend)     │     │  (Backend API)    │     │   (DB + Auth)    │
-│   localhost:3000 │     │  localhost:8080   │     │   (Cloud)        │
+│   Next.js 16     │────▶│  Python ML        │────▶│   Supabase       │
+│   (Frontend)     │     │  (FastAPI proxy)  │     │   (DB + Auth)    │
+│   localhost:3000 │     │  localhost:5001   │     │   (Cloud)        │
 └─────────────────┘     └──────┬───────────┘     └─────────────────┘
                                │
                                ▼
                         ┌─────────────────┐
-                        │  Python ML       │
-                        │  Sidecar         │
-                        │  localhost:5001  │
-                        │  (CiferAI)       │
+                        │  Keras Model     │
+                        │  (model.h5)      │
+                        │                  │
+                        │  DistilBERT      │
+                        │  (HF transformer)│
                         └─────────────────┘
 ```
+
+The frontend fetches data through a same-origin Next.js API route (`/api/proxy`) that forwards requests to the Python ML service. The ML service uses the `service_role` key to query Supabase with no row limits, enabling accurate aggregation across all 26K+ transactions.
 
 ## Tech Stack
 
 | Layer | Technology |
 |-------|-----------|
 | Frontend | Next.js 16.2, React 19, Tailwind CSS v4, TypeScript, recharts, framer-motion, lucide-react |
-| Backend | Spring Boot 4.0, Java 21, Spring Security |
 | Database | Supabase (PostgreSQL) with Row-Level Security |
 | Auth | Supabase Auth with SSR (`@supabase/ssr`) |
-| ML | CiferAI Keras model via FastAPI sidecar |
+| ML | Keras model + DistilBERT transformer ensemble via FastAPI sidecar |
 
 ## Getting Started
 
 ### Prerequisites
 
 - Node.js 20+
-- Java 21+
 - Python 3.9+
 - Supabase project (free tier)
 
 ### 1. Supabase Setup
 
 1. Create a project at [supabase.com](https://supabase.com)
-2. Run `backend/src/main/resources/supabase-schema.sql` in the SQL Editor
+2. Run the SQL schema (`backend/src/main/resources/supabase-schema.sql`) in the SQL Editor
 3. Copy your project URL, anon key, and service role key
 
 ### 2. Environment Variables
@@ -65,31 +64,32 @@ Enterprise-grade fraud detection dashboard built with Next.js, Spring Boot, and 
 ```
 NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your-publishable-key
+SUPABASE_SERVICE_KEY=your-service-role-key
+NEXT_PUBLIC_ML_API_URL=http://localhost:5001
 ```
 
-**`backend/src/main/resources/application.properties`**
-```properties
-supabase.url=https://your-project.supabase.co
-supabase.anon-key=your-anon-key
-supabase.service-role-key=your-service-role-key
-supabase.jwt-secret=your-jwt-secret
-```
-
-### 3. Run — 3 Terminals
+### 3. Seed the Database
 
 ```bash
-# Terminal 1 — Python ML sidecar
 cd python-ml-service
 pip install -r requirements.txt
-uvicorn app:app --port 5001
+export SUPABASE_SERVICE_KEY=your-service-role-key
+python3 seed_fast.py
+```
 
-# Terminal 2 — Spring Boot backend
-cd backend
-./mvnw spring-boot:run
+This creates 100 users, ~200 accounts, and 25K+ transactions with synthetic fraud patterns.
 
-# Terminal 3 — Next.js frontend
+### 4. Run — 2 Terminals
+
+```bash
+# Terminal 1 — Python ML service
+cd python-ml-service
+export SUPABASE_SERVICE_KEY=your-service-role-key
+python3 app.py    # → localhost:5001
+
+# Terminal 2 — Next.js frontend
 cd frontend
-npm run dev
+npm run dev        # → localhost:3000
 ```
 
 Open [localhost:3000](http://localhost:3000).
@@ -98,7 +98,7 @@ Open [localhost:3000](http://localhost:3000).
 
 ### Dashboard
 - Real-time transaction monitoring with search and risk/status filters
-- KPI cards (total transactions, suspicious, confirmed fraud, blocked attempts)
+- KPI cards (26K+ total transactions, suspicious, confirmed fraud, blocked attempts)
 - Fraud health cards with animated progress bars
 - Live transaction feed with ML risk score bars
 
@@ -128,10 +128,7 @@ Open [localhost:3000](http://localhost:3000).
 | Investigator | All analyst + update cases, manage rules |
 | Admin | Full access + manage rules, team, delete data |
 
-RBAC is enforced via:
-- **Database**: Supabase RLS policies per table
-- **Backend**: Role checks on sensitive endpoints (`/cases`, `/rules`)
-- **Frontend**: `ProtectedRoute` (auth gate), `RoleGate` (component wrapper), sidebar filtering
+RBAC is enforced via Supabase RLS policies and frontend `RoleGate` components.
 
 ### Realtime
 - WebSocket subscriptions via Supabase Realtime
@@ -142,7 +139,11 @@ RBAC is enforced via:
 ```
 ├── frontend/                    # Next.js application
 │   ├── src/
-│   │   ├── app/                 # Pages (dashboard, login, signup)
+│   │   ├── app/
+│   │   │   ├── api/proxy/      # Same-origin proxy to ML service
+│   │   │   ├── page.tsx         # Main dashboard
+│   │   │   ├── login/           # Login page
+│   │   │   └── signup/          # Signup page
 │   │   ├── components/
 │   │   │   ├── auth/            # RoleGate, ProtectedRoute
 │   │   │   ├── ui/              # Sidebar, Header, Icons
@@ -154,41 +155,41 @@ RBAC is enforced via:
 │   │   ├── lib/                 # Supabase service + type exports
 │   │   └── utils/supabase/      # Server + browser client factories
 │   └── .env.local
-├── backend/                     # Spring Boot API
-│   ├── src/main/java/com/bank/frauddetection/
-│   │   ├── controller/          # AuthController, DashboardController
-│   │   ├── supabase/            # SupabaseClient, AuthService, DataService
-│   │   ├── dto/                 # FraudDetectionRequest/Response
-│   │   ├── ml/                  # FraudDetectionClient (ML sidecar)
-│   │   └── config/              # RestTemplateConfig
+├── backend/
 │   └── src/main/resources/
 │       └── supabase-schema.sql  # Full DB schema with RLS
-├── python-ml-service/           # FastAPI ML sidecar
-│   ├── app.py                   # /predict and /health endpoints
-│   ├── model.h5                 # CiferAI trained model
-│   ├── preprocessor.joblib      # Scaler + LabelEncoder
+├── python-ml-service/
+│   ├── app.py                   # FastAPI: /predict, /api/stats, /api/transactions
+│   ├── seed_fast.py             # Seed script: 100 users, 25K+ transactions
+│   ├── model.h5                 # Keras trained model (PaySim)
+│   ├── preprocessor/            # Scaler + LabelEncoder
 │   └── requirements.txt
 └── README.md
 ```
 
 ## API Endpoints
 
-### Backend (`/api`)
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| POST | `/auth/login` | No | Login with email/password |
-| GET | `/auth/me` | Yes | Current user profile + role |
-| GET | `/auth/role` | Yes | Current user role |
-| GET | `/dashboard/stats` | Yes | Aggregated dashboard stats |
-| GET | `/dashboard/transactions` | Yes | Transaction list |
-| GET | `/dashboard/transactions/{id}` | Yes | Single transaction detail |
-| GET | `/dashboard/cases` | Yes | Fraud cases list |
-| PATCH | `/dashboard/cases/{id}` | Inv/Admin | Update case |
-| GET | `/dashboard/alerts` | Yes | Alerts list |
-| GET | `/dashboard/rules` | Yes | Fraud rules list |
+### Next.js Proxy (same-origin, `localhost:3000`)
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/proxy?path=stats` | Aggregated dashboard stats (accurate count) |
+| GET | `/api/proxy?path=transactions&limit=N` | Transaction list with pagination |
 
 ### ML Sidecar (`localhost:5001`)
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/predict` | Predict fraud probability (8 features) |
 | GET | `/health` | Service health check |
+| GET | `/api/stats` | Aggregated stats (via service_role key) |
+| GET | `/api/transactions` | Transaction list (no row limit) |
+| POST | `/predict` | Keras fraud prediction (8 features) |
+| POST | `/predict-transformer` | DistilBERT text-based fraud prediction |
+| POST | `/predict-ensemble` | 60/40 weighted Keras + DistilBERT blend |
+
+## Seed Data
+
+Run `seed_fast.py` to populate the database with realistic synthetic data:
+
+- **100 auth users** with profiles and roles (admin, investigator, analyst, user)
+- **~200 accounts** (checking, savings, credit card) with balances
+- **25,000+ transactions** with ~5% fraud rate, ML probabilities, risk scores
+- **300 alerts** and **100+ fraud cases** assigned to investigators

@@ -40,11 +40,14 @@ export default function TransactionTable({ transactions, onSelect }: Props) {
   }, [transactions, search, riskFilter, statusFilter]);
 
   return (
-    <div className="glass rounded-2xl overflow-hidden animate-slide-up delay-3">
+    <div className="glass-neon rounded-2xl overflow-hidden animate-slide-up delay-3">
       <div className="p-5 pb-0 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h3 className="text-base font-semibold text-white">Live Transaction Feed</h3>
-          <p className="text-xs text-[#64748b] mt-0.5">Real-time monitoring · {filtered.length} transactions</p>
+          <div className="flex items-center gap-2">
+            <h3 className="text-base font-semibold text-white">Live Transaction Feed</h3>
+            <span className="w-1.5 h-1.5 rounded-full bg-[#22ff8b] animate-glow-pulse" />
+          </div>
+          <p className="text-xs text-[#64748b] mt-0.5 font-mono">Real-time monitoring · {filtered.length} transactions</p>
         </div>
         <div className="flex items-center gap-2.5 flex-wrap">
           <div className="relative">
@@ -54,11 +57,11 @@ export default function TransactionTable({ transactions, onSelect }: Props) {
               placeholder="Search..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-44 h-9 pl-9 pr-3 rounded-lg text-xs bg-[#1e293b] border border-[#334155] text-white placeholder-[#4a5568] outline-none focus:border-blue-500/30"
+              className="w-44 h-9 pl-9 pr-3 rounded-lg text-xs bg-[#1e293b] border border-[#334155] text-white placeholder-[#4a5568] outline-none focus:border-[#00f0ff]/30"
             />
           </div>
           <select value={riskFilter} onChange={(e) => setRiskFilter(e.target.value)}
-            className="h-9 px-3 rounded-lg text-xs bg-[#1e293b] border border-[#334155] text-[#94a3b8] outline-none focus:border-blue-500/30">
+            className="h-9 px-3 rounded-lg text-xs bg-[#1e293b] border border-[#334155] text-[#94a3b8] outline-none focus:border-[#00f0ff]/30">
             <option value="all">All Risk</option>
             <option value="critical">Critical</option>
             <option value="high">High</option>
@@ -66,14 +69,14 @@ export default function TransactionTable({ transactions, onSelect }: Props) {
             <option value="low">Low</option>
           </select>
           <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
-            className="h-9 px-3 rounded-lg text-xs bg-[#1e293b] border border-[#334155] text-[#94a3b8] outline-none focus:border-blue-500/30">
+            className="h-9 px-3 rounded-lg text-xs bg-[#1e293b] border border-[#334155] text-[#94a3b8] outline-none focus:border-[#00f0ff]/30">
             <option value="all">All Status</option>
             <option value="approved">Approved</option>
             <option value="flagged">Flagged</option>
             <option value="blocked">Blocked</option>
             <option value="pending">Pending</option>
           </select>
-          <button className="h-9 px-3 rounded-lg text-xs bg-[#1e293b] border border-[#334155] text-[#94a3b8] hover:text-white flex items-center gap-1.5">
+          <button className="h-9 px-3 rounded-lg text-xs bg-[#1e293b] border border-[#334155] text-[#94a3b8] hover:text-white hover:border-[#00f0ff]/20 flex items-center gap-1.5 transition-all">
             <Icons.download size={14} /> Export
           </button>
         </div>
@@ -84,9 +87,9 @@ export default function TransactionTable({ transactions, onSelect }: Props) {
           <thead>
             <tr className="text-[#64748b] text-[11px] uppercase tracking-wider border-y border-[#1e293b]">
               <th className="text-left font-medium px-4 py-3">ID</th>
-              <th className="text-left font-medium px-4 py-3">Account</th>
+              <th className="text-left font-medium px-4 py-3">From</th>
               <th className="text-left font-medium px-4 py-3">Amount</th>
-              <th className="text-left font-medium px-4 py-3">Merchant</th>
+              <th className="text-left font-medium px-4 py-3">To</th>
               <th className="text-left font-medium px-4 py-3">Region</th>
               <th className="text-left font-medium px-4 py-3">Type</th>
               <th className="text-left font-medium px-4 py-3">Risk</th>
@@ -103,13 +106,13 @@ export default function TransactionTable({ transactions, onSelect }: Props) {
                 <tr
                   key={tx.id}
                   onClick={() => onSelect(tx)}
-                  className="border-b border-[#1e293b]/50 hover:bg-white/[0.02] transition-colors cursor-pointer group"
+                  className="border-b border-[#1e293b]/50 hover:bg-white/[0.02] transition-colors cursor-pointer group relative"
                 >
                   <td className="px-4 py-3.5">
                     <span className="font-mono text-xs text-[#94a3b8]">{tx.transaction_id}</span>
                   </td>
                   <td className="px-4 py-3.5">
-                    <span className="text-white text-xs font-medium">{tx.account_name || tx.account_id}</span>
+                    <span className="block text-xs text-[#60a5fa] font-medium">→ {tx.account_name || tx.account_id}</span>
                     <span className="block text-[10px] text-[#64748b] font-mono">•••• {tx.card_last_four}</span>
                   </td>
                   <td className="px-4 py-3.5">
@@ -128,7 +131,7 @@ export default function TransactionTable({ transactions, onSelect }: Props) {
                   </td>
                   <td className="px-4 py-3.5">
                     <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold" style={{ background: rc.bg, color: rc.text }}>
-                      <span className="w-1.5 h-1.5 rounded-full" style={{ background: rc.dot }} />
+                      <span className="w-1.5 h-1.5 rounded-full animate-glow-pulse" style={{ background: rc.dot }} />
                       {rc.label}
                     </span>
                   </td>
@@ -141,10 +144,11 @@ export default function TransactionTable({ transactions, onSelect }: Props) {
                     <div className="flex items-center gap-2">
                       <div className="w-16 h-1.5 rounded-full bg-[#1e293b] overflow-hidden">
                         <div
-                          className="h-full rounded-full"
+                          className="h-full rounded-full transition-all duration-500"
                           style={{
                             width: `${((tx.ml_fraud_probability || 0) * 100)}%`,
-                            background: (tx.ml_fraud_probability || 0) > 0.7 ? "#ef4444" : (tx.ml_fraud_probability || 0) > 0.4 ? "#f59e0b" : "#22c55e",
+                            background: (tx.ml_fraud_probability || 0) > 0.7 ? "#ef4444" : (tx.ml_fraud_probability || 0) > 0.4 ? "#f59e0b" : "#22ff8b",
+                            boxShadow: (tx.ml_fraud_probability || 0) > 0.7 ? "0 0 8px rgba(239,68,68,0.5)" : "none",
                           }}
                         />
                       </div>
@@ -152,7 +156,7 @@ export default function TransactionTable({ transactions, onSelect }: Props) {
                     </div>
                   </td>
                   <td className="px-4 py-3.5 text-right">
-                    <span className="text-[#64748b] text-xs">{new Date(tx.timestamp).toLocaleTimeString()}</span>
+                    <span className="text-[#64748b] text-xs font-mono">{new Date(tx.timestamp).toLocaleTimeString()}</span>
                   </td>
                 </tr>
               );

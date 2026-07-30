@@ -1,6 +1,8 @@
 import { createClient as createBrowserClient } from "@/utils/supabase/client";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+const ML_API = process.env.NEXT_PUBLIC_ML_API_URL || "http://localhost:5001";
+
 export interface Transaction {
   id: number;
   transaction_id: string;
@@ -57,7 +59,29 @@ export interface Alert {
   created_at: string;
 }
 
-interface DashboardStats {
+export interface Account {
+  id: number;
+  user_id: string;
+  account_name: string;
+  account_number: string;
+  balance: number;
+  currency: string;
+  created_at: string;
+}
+
+export interface Transfer {
+  id: number;
+  sender_account_id: number;
+  receiver_account_id: number;
+  sender_name: string;
+  receiver_name: string;
+  amount: number;
+  note: string;
+  status: "completed" | "pending" | "failed";
+  created_at: string;
+}
+
+export interface DashboardStats {
   totalTransactions: number;
   suspiciousTransactions: number;
   confirmedFraud: number;
@@ -104,6 +128,11 @@ class SupabaseService {
   }
 
   async getStats(): Promise<DashboardStats> {
+    try {
+      const res = await fetch(`/api/proxy?path=stats`);
+      if (res.ok) return await res.json();
+    } catch { /* fallback to direct query */ }
+
     const client = this.getClient();
     const { data: txs } = await client.from("transactions").select("status,risk_level,is_fraud,is_suspicious,risk_score,amount");
     const { data: alerts } = await client.from("alerts").select("id").eq("is_read", false);
@@ -127,6 +156,14 @@ class SupabaseService {
   }
 
   async getTransactions(limit = 100): Promise<Transaction[]> {
+    try {
+      const res = await fetch(`/api/proxy?path=transactions&limit=${limit}&offset=0`);
+      if (res.ok) {
+        const json = await res.json();
+        return json.data as Transaction[];
+      }
+    } catch { /* fallback */ }
+
     const { data } = await this.getClient()
       .from("transactions")
       .select("*")
@@ -169,6 +206,59 @@ class SupabaseService {
       .order("created_at", { ascending: false })
       .limit(20);
     return (data || []) as Alert[];
+  }
+
+  async getUserProfile(userId: string): Promise<{ role: string | null } | null> {
+    try {
+      const { data } = await this.getClient()
+        .from("user_profiles")
+        .select("role")
+        .eq("id", userId)
+        .single();
+      return data as { role: string | null } | null;
+    } catch {
+      return null;
+    }
+  }
+
+  async getAccounts(userId: string): Promise<Account[]> {
+    const { data } = await this.getClient()
+      .from("accounts")
+      .select("*")
+      .eq("user_id", userId)
+      .order("id");
+    return (data || []) as Account[];
+  }
+
+  async getTransfers(accountIds: number[]): Promise<Transfer[]> {
+    if (accountIds.length === 0) return [];
+    const { data } = await this.getClient()
+      .from("transfers")
+      .select("*")
+      .or(accountIds.map((id) => `sender_account_id.eq.${id},receiver_account_id.eq.${id}`).join(","))
+      .order("created_at", { ascending: false })
+      .limit(20);
+    return (data || []) as Transfer[];
+  }
+
+  async lookupRecipient(query: string): Promise<{ id: number; account_name: string; account_number: string; email: string } | null> {
+    const { data, error } = await this.getClient().rpc("lookup_recipient", { search_query: query.trim() });
+    if (error || !data) return null;
+    const result = data as { success: boolean; data?: { id: number; account_name: string; account_number: string; email: string }; error?: string };
+    if (!result.success || !result.data) return null;
+    return result.data;
+  }
+
+  async transferMoney(senderAccountId: number, receiverAccountId: number, amount: number, note?: string): Promise<{ success: boolean; error?: string }> {
+    const { data, error } = await this.getClient().rpc("transfer_money", {
+      sender_acc_id: senderAccountId,
+      receiver_acc_id: receiverAccountId,
+      transfer_amount: amount,
+      transfer_note: note || "",
+    });
+    if (error) return { success: false, error: error.message };
+    const result = data as { success: boolean; error: string | null };
+    return { success: result.success, error: result.error || undefined };
   }
 
   async getRules() {

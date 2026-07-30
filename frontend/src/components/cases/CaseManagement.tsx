@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Icons } from "@/components/ui/Icons";
-import type { FraudCase } from "@/lib/supabase";
+import { supabase, type FraudCase } from "@/lib/supabase";
 
 const severityColors: Record<string, string> = {
   critical: "#ef4444", high: "#f59e0b", medium: "#3b82f6", low: "#22c55e",
@@ -15,34 +15,44 @@ const statusStyles: Record<string, string> = {
   dismissed: "bg-[#64748b]/10 text-[#64748b]",
 };
 
-const initialCases: FraudCase[] = [
-  { id: 1, transaction_id: 8294, case_number: "FC-2024-001", title: "Large Crypto Exchange Transfer", description: "$12,450 transfer to CryptoExchange.io from new device", severity: "critical", status: "investigating", assigned_to: "", fraud_type: "account_takeover", amount_at_risk: 12450, is_confirmed_fraud: false, created_at: new Date().toISOString() },
-  { id: 2, transaction_id: 8292, case_number: "FC-2024-002", title: "Western Union Rapid Cash-Out", description: "$8,920 wire transfer flagged by velocity rule", severity: "high", status: "open", assigned_to: "", fraud_type: "rapid_cashout", amount_at_risk: 8920, is_confirmed_fraud: false, created_at: new Date().toISOString() },
-  { id: 3, transaction_id: 8291, case_number: "FC-2024-003", title: "Geo Anomaly - Target.com", description: "Login from NYC, purchase from IP in Lagos", severity: "medium", status: "open", assigned_to: "", fraud_type: "geo_anomaly", amount_at_risk: 2150, is_confirmed_fraud: false, created_at: new Date().toISOString() },
-  { id: 4, transaction_id: 8289, case_number: "FC-2024-004", title: "High-Value International Wire", description: "$15,800 HSBC transfer to unverified beneficiary", severity: "critical", status: "investigating", assigned_to: "", fraud_type: "wire_fraud", amount_at_risk: 15800, is_confirmed_fraud: false, created_at: new Date().toISOString() },
-];
-
 export default function CaseManagement() {
-  const [cases, setCases] = useState(initialCases);
+  const [cases, setCases] = useState<FraudCase[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const loadCases = useCallback(async () => {
+    setLoading(true);
+    const fetched = await supabase.getCases();
+    setCases(fetched);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    loadCases();
+  }, [loadCases]);
   const [selectedCase, setSelectedCase] = useState<FraudCase | null>(null);
   const [note, setNote] = useState("");
 
-  const updateStatus = (id: number, status: string) => {
+  const updateStatus = async (id: number, status: string) => {
     setCases((prev) => prev.map((c) => (c.id === id ? { ...c, status: status as any } : c)));
+    await supabase.updateCase(id, { status: status as any });
   };
 
-  const markFraud = (id: number, val: boolean) => {
+  const markFraud = async (id: number, val: boolean) => {
     setCases((prev) => prev.map((c) => (c.id === id ? { ...c, is_confirmed_fraud: val, status: val ? "resolved" : "dismissed" } : c)));
+    await supabase.updateCase(id, { is_confirmed_fraud: val, status: val ? "resolved" : "dismissed" } as any);
   };
 
   return (
-    <div className="glass rounded-2xl animate-slide-up delay-6">
+    <div className="glass-neon rounded-2xl animate-slide-up delay-6">
       <div className="p-5 pb-3 flex items-center justify-between">
         <div>
-          <h3 className="text-base font-semibold text-white">Case Management</h3>
-          <p className="text-xs text-[#64748b] mt-0.5">{cases.length} active cases requiring review</p>
+          <div className="flex items-center gap-2">
+            <h3 className="text-base font-semibold text-white">Case Management</h3>
+            <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-[#f59e0b]/10 text-[#f59e0b] border border-[#f59e0b]/20">ACTIVE</span>
+          </div>
+          <p className="text-xs text-[#64748b] mt-0.5 font-mono">{cases.length} active cases requiring review</p>
         </div>
-        <button className="h-9 px-4 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow-lg">
+        <button className="h-9 px-4 rounded-xl bg-gradient-to-r from-[#3b82f6] to-[#00f0ff] text-white text-xs font-semibold flex items-center gap-1.5 shadow-lg hover:shadow-blue-500/20 transition-shadow">
           <Icons.plus size={14} /> New Case
         </button>
       </div>
@@ -61,7 +71,7 @@ export default function CaseManagement() {
           </thead>
           <tbody>
             {cases.map((c) => (
-              <tr key={c.id} className="border-b border-[#1e293b]/50 hover:bg-white/[0.02] transition-colors">
+              <tr key={c.id} className="border-b border-[#1e293b]/50 hover:bg-white/[0.02] transition-colors relative">
                 <td className="px-4 py-3.5">
                   <span className="font-mono text-xs text-[#94a3b8]">{c.case_number}</span>
                 </td>
@@ -92,7 +102,7 @@ export default function CaseManagement() {
                 </td>
                 <td className="px-4 py-3.5 text-right">
                   <div className="flex items-center justify-end gap-1.5">
-                    <button onClick={() => markFraud(c.id, true)} className="px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-all">
+                    <button onClick={() => markFraud(c.id, true)} className="px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-[#22ff8b]/10 text-[#22ff8b] hover:bg-[#22ff8b]/20 transition-all">
                       Confirm
                     </button>
                     <button onClick={() => markFraud(c.id, false)} className="px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-[#64748b]/10 text-[#64748b] hover:bg-[#64748b]/20 transition-all">

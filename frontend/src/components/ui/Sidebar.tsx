@@ -1,8 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import { Icons } from "./Icons";
 import { useAuth, type UserRole } from "@/context/AuthContext";
+import { supabase } from "@/lib/supabase";
 
 interface NavItem {
   label: string;
@@ -12,16 +14,6 @@ interface NavItem {
   roles?: UserRole[];
 }
 
-const sections: NavItem[] = [
-  { label: "Overview", icon: "dashboard", key: "overview", badge: null },
-  { label: "Transactions", icon: "activity", key: "transactions", badge: null },
-  { label: "Fraud Cases", icon: "shield", key: "cases", badge: "12" },
-  { label: "Analytics", icon: "barChart", key: "analytics", badge: null },
-  { label: "Rules Engine", icon: "settings", key: "rules", badge: null, roles: ["investigator", "admin"] },
-  { label: "Reports", icon: "fileText", key: "reports", badge: null },
-  { label: "Team", icon: "users", key: "team", badge: null, roles: ["admin"] },
-];
-
 interface SidebarProps {
   active: string;
   onNavigate: (key: string) => void;
@@ -29,13 +21,36 @@ interface SidebarProps {
 
 export default function Sidebar({ active, onNavigate }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
-  const { user, hasRole } = useAuth();
+  const { user, hasRole, logout } = useAuth();
+  const router = useRouter();
+  const [caseCount, setCaseCount] = useState("12");
+
+  const loadCaseCount = useCallback(async () => {
+    const cases = await supabase.getCases();
+    setCaseCount(String(cases.length));
+  }, []);
+
+  useEffect(() => {
+    loadCaseCount();
+  }, [loadCaseCount]);
+
+  const sections = useMemo<NavItem[]>(() => [
+    { label: "Overview", icon: "dashboard", key: "overview", badge: null },
+    { label: "Banking", icon: "wallet", key: "banking", badge: null },
+    { label: "Transactions", icon: "activity", key: "transactions", badge: null, roles: ["analyst", "investigator", "admin"] },
+    { label: "Fraud Cases", icon: "shield", key: "cases", badge: caseCount, roles: ["analyst", "investigator", "admin"] },
+    { label: "Analytics", icon: "barChart", key: "analytics", badge: null, roles: ["analyst", "investigator", "admin"] },
+    { label: "Rules Engine", icon: "settings", key: "rules", badge: null, roles: ["investigator", "admin"] },
+    { label: "Reports", icon: "fileText", key: "reports", badge: null, roles: ["analyst", "investigator", "admin"] },
+    { label: "Team", icon: "users", key: "team", badge: null, roles: ["admin"] },
+  ], [caseCount]);
 
   const visibleSections = sections.filter((s) => !s.roles || hasRole(...s.roles));
 
   const IconComponent = (name: string) => {
     const iconMap: Record<string, React.ReactNode> = {
       dashboard: <Icons.dashboard />,
+      wallet: <Icons.wallet />,
       activity: <Icons.activity />,
       shield: <Icons.shield />,
       barChart: <Icons.barChart />,
@@ -57,13 +72,13 @@ export default function Sidebar({ active, onNavigate }: SidebarProps) {
       }}
     >
       <div className="flex items-center gap-3 px-5 h-16 shrink-0 border-b border-[#1e293b]">
-        <div className="w-9 h-9 rounded-xl accent-gradient flex items-center justify-center shadow-lg shrink-0">
+        <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#3b82f6] via-[#00f0ff] to-[#8b5cf6] flex items-center justify-center shadow-lg shrink-0 animate-gradient-shift" style={{ backgroundSize: '200% 200%' }}>
           <Icons.bank size={18} />
         </div>
         {!collapsed && (
           <div className="overflow-hidden">
             <span className="text-[15px] font-bold text-white tracking-tight block leading-tight">FraudShield</span>
-            <span className="text-[10px] text-[#64748b] tracking-widest uppercase block">Banking Intelligence</span>
+            <span className="text-[10px] text-[#00f0ff]/60 tracking-widest uppercase block font-mono">Banking Intelligence</span>
           </div>
         )}
       </div>
@@ -77,7 +92,7 @@ export default function Sidebar({ active, onNavigate }: SidebarProps) {
               onClick={() => onNavigate(s.key)}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 relative group ${
                 isActive
-                  ? "accent-gradient text-white shadow-lg shadow-blue-500/20"
+                  ? "bg-gradient-to-r from-[#3b82f6] to-[#00f0ff] text-white shadow-lg shadow-blue-500/20"
                   : "text-[#64748b] hover:text-white hover:bg-white/[0.05]"
               }`}
             >
@@ -108,21 +123,47 @@ export default function Sidebar({ active, onNavigate }: SidebarProps) {
           {!collapsed && (
             <div className="overflow-hidden">
               <span className="block text-sm font-medium text-white truncate">{user?.email?.split("@")[0] || "User"}</span>
-              <span className="flex items-center gap-1.5 text-xs text-[#64748b]">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                {user?.role ? user.role.charAt(0).toUpperCase() + user.role.slice(1) : "Analyst"}
-              </span>
+              {user?.role ? (() => {
+                const roleColors: Record<string, { text: string; dot: string }> = {
+                  user: { text: "#64748b", dot: "#64748b" },
+                  analyst: { text: "#60a5fa", dot: "#60a5fa" },
+                  investigator: { text: "#a78bfa", dot: "#a78bfa" },
+                  admin: { text: "#fbbf24", dot: "#fbbf24" },
+                };
+                const colors = roleColors[user.role] || roleColors.user;
+                return (
+                  <span className="flex items-center gap-1.5 text-xs" style={{ color: colors.text }}>
+                    <span className="w-1.5 h-1.5 rounded-full" style={{ background: colors.dot }} />
+                    {user.role.charAt(0).toUpperCase() + user.role.slice(1)}
+                  </span>
+                );
+              })() : (
+                <span className="text-[10px] text-[#64748b]">Role not set — run SQL setup</span>
+              )}
             </div>
           )}
         </div>
-        <button
-          onClick={() => setCollapsed(!collapsed)}
-          className="w-full mt-1 flex items-center justify-center h-8 rounded-lg text-[#64748b] hover:text-white hover:bg-white/[0.05] transition-all text-xs"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`transition-transform ${collapsed ? "rotate-180" : ""}`}>
-            <polyline points="15 18 9 12 15 6" />
-          </svg>
-        </button>
+        <div className="flex items-center gap-1 mt-1">
+          <button
+            onClick={() => { logout(); router.push("/login"); }}
+            className="flex-1 flex items-center justify-center h-8 rounded-lg text-[#64748b] hover:text-red-400 hover:bg-red-500/10 transition-all"
+            title="Log out"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+              <polyline points="16 17 21 12 16 7" />
+              <line x1="21" y1="12" x2="9" y2="12" />
+            </svg>
+          </button>
+          <button
+            onClick={() => setCollapsed(!collapsed)}
+            className="flex-1 flex items-center justify-center h-8 rounded-lg text-[#64748b] hover:text-white hover:bg-white/[0.05] transition-all"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`transition-transform ${collapsed ? "rotate-180" : ""}`}>
+              <polyline points="15 18 9 12 15 6" />
+            </svg>
+          </button>
+        </div>
       </div>
     </aside>
   );

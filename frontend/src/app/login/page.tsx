@@ -108,9 +108,21 @@ export default function LoginPage() {
                 Sign up
               </button>
             </p>
-            <p className="text-xs text-[#64748b]">
-              Secure enterprise access. Contact your administrator for credentials.
-            </p>
+            <div className="space-y-1.5">
+              <p className="text-[10px] text-[#4a5568] font-mono uppercase tracking-wider">Available Roles</p>
+              <div className="flex flex-wrap gap-2 justify-center">
+                {[
+                  { role: "User", color: "text-[#64748b]" },
+                  { role: "Analyst", color: "text-blue-400" },
+                  { role: "Investigator", color: "text-purple-400" },
+                  { role: "Admin", color: "text-amber-400" },
+                ].map((r) => (
+                  <span key={r.role} className={`text-[10px] font-mono ${r.color} px-1.5 py-0.5 rounded bg-white/[0.02] border border-white/[0.05]`}>
+                    {r.role}
+                  </span>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
       </div>

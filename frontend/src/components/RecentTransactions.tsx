@@ -1,14 +1,25 @@
 "use client";
 
-const transactions = [
-  { id: "TXN-8294", card: "**** 4829", amount: "$12,450.00", merchant: "CryptoExchange.io", time: "2 min ago", risk: "critical", status: "Blocked" },
-  { id: "TXN-8293", card: "**** 1736", amount: "$340.00", merchant: "Amazon.com", time: "15 min ago", risk: "low", status: "Approved" },
-  { id: "TXN-8292", card: "**** 6591", amount: "$8,920.00", merchant: "Western Union", time: "28 min ago", risk: "high", status: "Flagged" },
-  { id: "TXN-8291", card: "**** 3347", amount: "$2,150.00", merchant: "Target.com", time: "1 hour ago", risk: "medium", status: "Review" },
-  { id: "TXN-8290", card: "**** 8872", amount: "$67.50", merchant: "Starbucks", time: "2 hours ago", risk: "low", status: "Approved" },
-  { id: "TXN-8289", card: "**** 4412", amount: "$15,800.00", merchant: "HSBC Intl Transfer", time: "3 hours ago", risk: "critical", status: "Blocked" },
-  { id: "TXN-8288", card: "**** 2239", amount: "$523.00", merchant: "Netflix.com", time: "4 hours ago", risk: "low", status: "Approved" },
-];
+import { useState, useEffect, useCallback } from "react";
+import { supabase, type Transaction } from "@/lib/supabase";
+
+function relativeTime(ts: string): string {
+  const diff = Date.now() - new Date(ts).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs} hour${hrs > 1 ? "s" : ""} ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days} day${days > 1 ? "s" : ""} ago`;
+}
+
+const statusLabels: Record<string, string> = {
+  pending: "Review",
+  approved: "Approved",
+  blocked: "Blocked",
+  flagged: "Flagged",
+};
 
 const riskColors = {
   critical: { bg: "rgba(239,68,68,0.15)", text: "#ef4444", dot: "#ef4444" },
@@ -25,6 +36,17 @@ const statusColors: Record<string, string> = {
 };
 
 export default function RecentTransactions() {
+  const [txns, setTxns] = useState<Transaction[]>([]);
+
+  const loadTxns = useCallback(async () => {
+    const data = await supabase.getTransactions(20);
+    setTxns(data);
+  }, []);
+
+  useEffect(() => {
+    loadTxns();
+  }, [loadTxns]);
+
   return (
     <div className="glass-card rounded-2xl p-6 animate-slide-up delay-5">
       <div className="flex items-center justify-between mb-5">
@@ -52,18 +74,18 @@ export default function RecentTransactions() {
             </tr>
           </thead>
           <tbody>
-            {transactions.map((tx) => {
-              const rc = riskColors[tx.risk as keyof typeof riskColors];
+            {txns.map((tx) => {
+              const rc = riskColors[tx.risk_level as keyof typeof riskColors] || riskColors.low;
               return (
                 <tr key={tx.id} className="border-b border-[#1e293b]/50 hover:bg-white/[0.02] transition-colors group">
                   <td className="py-3.5 pr-4">
-                    <span className="font-mono text-xs text-[#94a3b8]">{tx.id}</span>
+                    <span className="font-mono text-xs text-[#94a3b8]">{tx.transaction_id}</span>
                   </td>
                   <td className="py-3.5 pr-4">
-                    <span className="text-white text-xs font-mono">{tx.card}</span>
+                    <span className="text-white text-xs font-mono">**** {tx.card_last_four}</span>
                   </td>
                   <td className="py-3.5 pr-4">
-                    <span className="text-white font-medium">{tx.amount}</span>
+                    <span className="text-white font-medium">${tx.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   </td>
                   <td className="py-3.5 pr-4">
                     <span className="text-[#94a3b8] text-xs">{tx.merchant}</span>
@@ -71,16 +93,16 @@ export default function RecentTransactions() {
                   <td className="py-3.5 pr-4">
                     <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium" style={{ background: rc.bg, color: rc.text }}>
                       <span className="w-1.5 h-1.5 rounded-full" style={{ background: rc.dot }} />
-                      {tx.risk.charAt(0).toUpperCase() + tx.risk.slice(1)}
+                      {tx.risk_level.charAt(0).toUpperCase() + tx.risk_level.slice(1)}
                     </span>
                   </td>
                   <td className="py-3.5 pr-4">
-                    <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium ${statusColors[tx.status]}`}>
-                      {tx.status}
+                    <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium ${statusColors[statusLabels[tx.status] || tx.status] || ""}`}>
+                      {statusLabels[tx.status] || tx.status}
                     </span>
                   </td>
                   <td className="py-3.5 text-right pr-4">
-                    <span className="text-[#64748b] text-xs">{tx.time}</span>
+                    <span className="text-[#64748b] text-xs">{relativeTime(tx.timestamp)}</span>
                   </td>
                   <td className="py-3.5 text-right">
                     <button className="opacity-0 group-hover:opacity-100 transition-opacity w-7 h-7 rounded-lg bg-[#1e293b] border border-[#334155] flex items-center justify-center hover:border-blue-500/30">

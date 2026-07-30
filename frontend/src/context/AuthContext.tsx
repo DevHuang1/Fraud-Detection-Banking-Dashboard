@@ -3,7 +3,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react";
 import { supabase } from "@/lib/supabase";
 
-export type UserRole = "analyst" | "investigator" | "admin";
+export type UserRole = "user" | "analyst" | "investigator" | "admin";
 
 interface User {
   id: string;
@@ -29,10 +29,25 @@ const AuthContext = createContext<AuthContextType>({
   hasRole: () => false,
 });
 
-function extractRole(data: any): UserRole | null {
-  if (!data) return null;
-  const role = data.role || data.user_metadata?.role || null;
-  if (["analyst", "investigator", "admin"].includes(role)) return role as UserRole;
+async function resolveRole(userId: string, authUser?: any): Promise<UserRole | null> {
+  const valid = (r: string) => ["user", "analyst", "investigator", "admin"].includes(r);
+  try {
+    const freshUser = await supabase.getUser();
+    const r = freshUser?.user_metadata?.role;
+    if (r && valid(r)) return r as UserRole;
+    const ar = freshUser?.app_metadata?.role;
+    if (ar && valid(ar)) return ar as UserRole;
+  } catch {}
+  if (authUser) {
+    const r = authUser.user_metadata?.role;
+    if (r && valid(r)) return r as UserRole;
+    const ar = authUser.app_metadata?.role;
+    if (ar && valid(ar)) return ar as UserRole;
+  }
+  try {
+    const profile = await supabase.getUserProfile(userId);
+    if (profile?.role && valid(profile.role)) return profile.role as UserRole;
+  } catch {}
   return null;
 }
 
@@ -48,22 +63,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (session) {
         const authUser = session.user;
         if (authUser) {
-          setUser({
-            id: authUser.id,
-            email: authUser.email || "",
-            role: extractRole(authUser),
-          });
+          const role = await resolveRole(authUser.id, authUser);
+          if (!cancelled) {
+            setUser({
+              id: authUser.id,
+              email: authUser.email || "",
+              role,
+            });
+          }
         }
       }
-      setLoading(false);
+      if (!cancelled) setLoading(false);
     })();
 
-    const { data: listener } = supabase.getClient().auth.onAuthStateChange((_event, session) => {
+    const { data: listener } = supabase.getClient().auth.onAuthStateChange(async (_event, session) => {
       if (session?.user) {
+        const role = await resolveRole(session.user.id, session.user);
         setUser({
           id: session.user.id,
           email: session.user.email || "",
-          role: extractRole(session.user),
+          role,
         });
       } else {
         setUser(null);
@@ -82,10 +101,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (result.error) return { error: result.error };
     const session = await supabase.getSession();
     if (session?.user) {
+      const role = await resolveRole(session.user.id, session.user);
       setUser({
         id: session.user.id,
         email: session.user.email || "",
-        role: extractRole(session.user),
+        role,
       });
     }
     return {};

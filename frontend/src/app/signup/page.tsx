@@ -5,10 +5,18 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/context/AuthContext";
 
+const roles = [
+  { value: "user", label: "User", description: "Read-only dashboard view" },
+  { value: "analyst", label: "Analyst", description: "View dashboards, read transactions & cases" },
+  { value: "investigator", label: "Investigator", description: "Update cases, manage alerts, moderate transactions" },
+  { value: "admin", label: "Admin", description: "Full access — manage users, rules, and system config" },
+];
+
 export default function SignupPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
+  const [selectedRole, setSelectedRole] = useState("analyst");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -41,7 +49,7 @@ export default function SignupPage() {
     const { error: signupErr } = await supabase.getClient().auth.signUp({
       email,
       password,
-      options: { data: { full_name: fullName } },
+      options: { data: { full_name: fullName, role: selectedRole } },
     });
 
     setSubmitting(false);
@@ -135,6 +143,34 @@ export default function SignupPage() {
                 minLength={6}
                 required
               />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-[#94a3b8] mb-1.5">Role</label>
+              <div className="grid grid-cols-1 gap-2">
+                {roles.map((r) => (
+                  <label
+                    key={r.value}
+                    className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
+                      selectedRole === r.value
+                        ? "bg-blue-500/10 border-blue-500/40"
+                        : "bg-[#1e293b] border-[#334155] hover:border-[#475569]"
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="role"
+                      value={r.value}
+                      checked={selectedRole === r.value}
+                      onChange={(e) => setSelectedRole(e.target.value)}
+                      className="mt-0.5 accent-blue-500"
+                    />
+                    <div>
+                      <span className="block text-sm font-medium text-white">{r.label}</span>
+                      <span className="block text-[11px] text-[#64748b]">{r.description}</span>
+                    </div>
+                  </label>
+                ))}
+              </div>
             </div>
             <button
               type="submit"

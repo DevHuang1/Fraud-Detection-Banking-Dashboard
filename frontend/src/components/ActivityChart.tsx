@@ -1,18 +1,43 @@
 "use client";
 
-const data = [
-  { day: "Mon", normal: 4200, fraud: 12 },
-  { day: "Tue", normal: 3800, fraud: 18 },
-  { day: "Wed", normal: 5100, fraud: 8 },
-  { day: "Thu", normal: 4600, fraud: 24 },
-  { day: "Fri", normal: 5400, fraud: 31 },
-  { day: "Sat", normal: 2900, fraud: 15 },
-  { day: "Sun", normal: 2100, fraud: 9 },
-];
+import { useState, useEffect, useCallback } from "react";
+import { supabase } from "@/lib/supabase";
+
+interface DayData {
+  day: string;
+  normal: number;
+  fraud: number;
+}
+
+const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+function aggregateByDay(txns: any[]): DayData[] {
+  const dayTotals: Record<string, { normal: number; fraud: number }> = {};
+  for (let i = 0; i < 7; i++) {
+    dayTotals[dayNames[i]] = { normal: 0, fraud: 0 };
+  }
+  for (const t of txns) {
+    const d = dayNames[new Date(t.timestamp).getDay()];
+    if (t.is_fraud) dayTotals[d].fraud++;
+    else dayTotals[d].normal++;
+  }
+  return dayNames.map((day) => ({ day, ...dayTotals[day] }));
+}
 
 export default function ActivityChart() {
-  const maxNormal = Math.max(...data.map((d) => d.normal));
-  const maxFraud = Math.max(...data.map((d) => d.fraud));
+  const [data, setData] = useState<DayData[]>([]);
+
+  const loadData = useCallback(async () => {
+    const txns = await supabase.getTransactions(1000);
+    setData(aggregateByDay(txns));
+  }, []);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  const maxNormal = data.length > 0 ? Math.max(...data.map((d) => d.normal)) : 1;
+  const maxFraud = data.length > 0 ? Math.max(...data.map((d) => d.fraud)) : 1;
 
   return (
     <div className="glass-card rounded-2xl p-6 animate-slide-up delay-4">

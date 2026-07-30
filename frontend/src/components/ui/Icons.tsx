@@ -55,4 +55,8 @@ export const Icons = {
   mapPin: createIcon("path M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z|circle cx=\"12\" cy=\"10\" r=\"3\""),
   creditCard: createIcon("rect x=\"1\" y=\"4\" width=\"22\" height=\"16\" rx=\"2\" ry=\"2\"|line x1=\"1\" y1=\"10\" x2=\"23\" y2=\"10\""),
   barChart: createIcon("line x1=\"18\" y1=\"20\" x2=\"18\" y2=\"10\"|line x1=\"12\" y1=\"20\" x2=\"12\" y2=\"4\"|line x1=\"6\" y1=\"20\" x2=\"6\" y2=\"14\""),
+  send: createIcon("path M22 2L11 13|path M22 2l-7 20-4-9-9-4 20-7z"),
+  receive: createIcon("path M2 2l20 11-9 4-4 9L2 2z"),
+  wallet: createIcon("rect x=\"1\" y=\"4\" width=\"22\" height=\"16\" rx=\"2\"|path M1 8h22|circle cx=\"17\" cy=\"14\" r=\"1\""),
+  refresh: createIcon("polyline 23 4 23 10 17 10|path M20.49 15a9 9 0 1 1-2.12-9.36L23 10"),
 };
