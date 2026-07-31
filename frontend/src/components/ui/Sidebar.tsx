@@ -17,10 +17,11 @@ interface NavItem {
 interface SidebarProps {
   active: string;
   onNavigate: (key: string) => void;
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
 }
 
-export default function Sidebar({ active, onNavigate }: SidebarProps) {
-  const [collapsed, setCollapsed] = useState(false);
+export default function Sidebar({ active, onNavigate, collapsed, onToggleCollapsed }: SidebarProps) {
   const { user, hasRole, logout } = useAuth();
   const router = useRouter();
   const [caseCount, setCaseCount] = useState("12");
@@ -40,6 +41,7 @@ export default function Sidebar({ active, onNavigate }: SidebarProps) {
     { label: "Transactions", icon: "activity", key: "transactions", badge: null, roles: ["analyst", "investigator", "admin"] },
     { label: "Fraud Cases", icon: "shield", key: "cases", badge: caseCount, roles: ["analyst", "investigator", "admin"] },
     { label: "Analytics", icon: "barChart", key: "analytics", badge: null, roles: ["analyst", "investigator", "admin"] },
+    { label: "Detection Flow", icon: "nodes", key: "flow", badge: null, roles: ["analyst", "investigator", "admin"] },
     { label: "Rules Engine", icon: "settings", key: "rules", badge: null, roles: ["investigator", "admin"] },
     { label: "Reports", icon: "fileText", key: "reports", badge: null, roles: ["analyst", "investigator", "admin"] },
     { label: "Team", icon: "users", key: "team", badge: null, roles: ["admin"] },
@@ -55,6 +57,7 @@ export default function Sidebar({ active, onNavigate }: SidebarProps) {
       shield: <Icons.shield />,
       barChart: <Icons.barChart />,
       settings: <Icons.settings />,
+      nodes: <Icons.nodes />,
       fileText: <Icons.fileText />,
       users: <Icons.users />,
     };
@@ -156,7 +159,7 @@ export default function Sidebar({ active, onNavigate }: SidebarProps) {
             </svg>
           </button>
           <button
-            onClick={() => setCollapsed(!collapsed)}
+            onClick={onToggleCollapsed}
             className="flex-1 flex items-center justify-center h-8 rounded-lg text-[#64748b] hover:text-white hover:bg-white/[0.05] transition-all"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`transition-transform ${collapsed ? "rotate-180" : ""}`}>

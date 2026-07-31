@@ -8,6 +8,32 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
 import os
+import re
+
+
+def load_env(paths):
+    """Load KEY=VALUE lines from .env files into os.environ (without overriding)."""
+    for p in paths:
+        if not os.path.isfile(p):
+            continue
+        try:
+            with open(p) as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    key, _, value = line.partition("=")
+                    key, value = key.strip(), value.strip().strip('"').strip("'")
+                    if key and key not in os.environ:
+                        os.environ[key] = value
+        except OSError:
+            pass
+
+
+load_env([
+    os.path.join(os.path.dirname(__file__), "..", "frontend", ".env.local"),
+    os.path.join(os.path.dirname(__file__), ".env"),
+])
 
 # ── Hugging Face Transformers ──────────────────────────────────
 TRANSFORMER_AVAILABLE = False

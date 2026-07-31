@@ -4,8 +4,9 @@ import { useState, useEffect, useCallback } from "react";
 import { LineChart, Line, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 import { supabase, type Transaction } from "@/lib/supabase";
 
-const COLORS = ["#00f0ff", "#8b5cf6", "#ec4899", "#f59e0b", "#22ff8b"];
-const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const COLORS = ["#00f0ff", "#8b5cf6", "#ec4899", "#f59e0b", "#22ff8b", "#3b82f6", "#f472b6", "#a3e635"];
+
+const SCORE_COLORS = ["#22ff8b", "#00f0ff", "#f59e0b", "#ef4444", "#ef4444"];
 
 function CustomTooltip({ active, payload, label }: any) {
   if (!active || !payload) return null;
@@ -42,20 +43,33 @@ function Widget({ title, subtitle, className, children }: WidgetProps) {
 
 function aggregateTrend(txns: Transaction[]) {
   const buckets: Record<string, { fraud: number; normal: number; scoreSum: number; count: number }> = {};
-  for (const n of dayNames) buckets[n] = { fraud: 0, normal: 0, scoreSum: 0, count: 0 };
-  for (const t of txns) {
-    const d = dayNames[new Date(t.timestamp).getDay()];
-    if (t.is_fraud) buckets[d].fraud++;
-    else buckets[d].normal++;
-    buckets[d].scoreSum += t.risk_score || 0;
-    buckets[d].count++;
+  const keys: string[] = [];
+  const now = new Date();
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+    const key = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+    keys.push(key);
+    buckets[key] = { fraud: 0, normal: 0, scoreSum: 0, count: 0 };
   }
-  return dayNames.map((day) => ({
-    day,
-    fraud: buckets[day].fraud,
-    normal: buckets[day].normal,
-    score: buckets[day].count > 0 ? Math.round(buckets[day].scoreSum / buckets[day].count) : 0,
-  }));
+  for (const t of txns) {
+    const d = new Date(t.timestamp);
+    const key = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+    if (!buckets[key]) continue;
+    if (t.is_fraud) buckets[key].fraud++;
+    else buckets[key].normal++;
+    buckets[key].scoreSum += t.risk_score || 0;
+    buckets[key].count++;
+  }
+  return keys.map((key) => {
+    const b = buckets[key];
+    const [, m, day] = key.split("-");
+    return {
+      day: `${m}/${day}`,
+      fraud: b.fraud,
+      normal: b.normal,
+      score: b.count > 0 ? Math.round(b.scoreSum / b.count) : 0,
+    };
+  });
 }
 
 function aggregateGeo(txns: Transaction[]) {
@@ -70,7 +84,7 @@ function aggregateGeo(txns: Transaction[]) {
   }
   if (total === 0) return [];
   return Object.entries(counts)
-    .map(([region, value]) => ({ region, value: Math.round((value / total) * 100) }))
+    .map(([region, value]) => ({ region, name: region, value, pct: Math.round((value / total) * 100) }))
     .sort((a, b) => b.value - a.value);
 }
 
@@ -85,25 +99,55 @@ function aggregateChannel(txns: Transaction[]) {
   return Object.entries(buckets).map(([channel, v]) => ({ channel, ...v }));
 }
 
+function aggregateMerchants(txns: Transaction[]) {
+  const map: Record<string, { count: number; scoreSum: number; blocked: number }> = {};
+  for (const t of txns) {
+    const m = t.merchant || "Unknown";
+    if (!map[m]) map[m] = { count: 0, scoreSum: 0, blocked: 0 };
+    map[m].count++;
+    map[m].scoreSum += t.risk_score || 0;
+    if (t.status === "blocked" || t.is_fraud) map[m].blocked++;
+  }
+  return Object.entries(map)
+    .map(([merchant, v]) => ({
+      merchant,
+      count: v.count,
+      blocked: v.blocked,
+      score: v.count > 0 ? Math.round(v.scoreSum / v.count) : 0,
+    }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 6);
+}
+
+function aggregateMlScores(txns: Transaction[]) {
+  const buckets = [0, 0, 0, 0, 0];
+  const labels = ["0-20", "20-40", "40-60", "60-80", "80-100"];
+  for (const t of txns) {
+    const p = (t.ml_fraud_probability || 0) * 100;
+    const idx = Math.min(4, Math.floor(p / 20));
+    buckets[idx]++;
+  }
+  return labels.map((range, i) => ({ range, count: buckets[i] }));
+}
+
 function aggregateDevices(txns: Transaction[]) {
-  const known = new Set<string>();
+  const freq: Record<string, number> = {};
   const suspicious = new Set<string>();
-  const all = new Set<string>();
   for (const t of txns) {
     if (!t.device_id) continue;
-    all.add(t.device_id);
-    if (t.is_suspicious) suspicious.add(t.device_id);
-    else known.add(t.device_id);
+    freq[t.device_id] = (freq[t.device_id] || 0) + 1;
+    if (t.is_fraud) suspicious.add(t.device_id);
   }
-  if (all.size === 0) return [];
-  const total = all.size;
-  const k = Math.round((known.size / total) * 100);
-  const s = Math.round((suspicious.size / total) * 100);
-  const n = Math.max(0, 100 - k - s);
+  const all = Object.keys(freq);
+  if (all.length === 0) return [];
+  const total = all.length;
+  const pct = (n: number) => Math.round((n / total) * 100);
+  const known = all.filter((id) => !suspicious.has(id) && freq[id] > 1).length;
+  const fresh = all.filter((id) => !suspicious.has(id) && freq[id] === 1).length;
   return [
-    { name: "Known Devices", value: k },
-    { name: "New Devices", value: n },
-    { name: "Suspicious", value: s },
+    { name: "Known Devices", value: pct(known) },
+    { name: "New Devices", value: pct(fresh) },
+    { name: "Suspicious", value: pct(suspicious.size) },
   ];
 }
 
@@ -112,13 +156,17 @@ export default function AnalyticsWidgets() {
   const [geoData, setGeoData] = useState<any[]>([]);
   const [channelData, setChannelData] = useState<any[]>([]);
   const [deviceData, setDeviceData] = useState<any[]>([]);
+  const [merchantData, setMerchantData] = useState<any[]>([]);
+  const [mlData, setMlData] = useState<any[]>([]);
 
   const loadData = useCallback(async () => {
-    const txns = await supabase.getTransactions(1000);
+    const txns = await supabase.getTransactions(5000);
     setTrendData(aggregateTrend(txns));
     setGeoData(aggregateGeo(txns));
     setChannelData(aggregateChannel(txns));
     setDeviceData(aggregateDevices(txns));
+    setMerchantData(aggregateMerchants(txns));
+    setMlData(aggregateMlScores(txns));
   }, []);
 
   useEffect(() => {
@@ -130,63 +178,69 @@ export default function AnalyticsWidgets() {
       <Widget title="Fraud Trend Analysis" subtitle="Daily fraud incidents & risk score" className="lg:col-span-2 delay-4 scan-line">
         <div className="h-56">
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={trendData.length > 0 ? trendData : [{ day: "Mon", fraud: 0, normal: 0, score: 0 }, { day: "Tue", fraud: 0, normal: 0, score: 0 }, { day: "Wed", fraud: 0, normal: 0, score: 0 }, { day: "Thu", fraud: 0, normal: 0, score: 0 }, { day: "Fri", fraud: 0, normal: 0, score: 0 }, { day: "Sat", fraud: 0, normal: 0, score: 0 }, { day: "Sun", fraud: 0, normal: 0, score: 0 }]}>
+            <AreaChart data={trendData}>
               <defs>
                 <linearGradient id="fraudGrad" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="#ef4444" stopOpacity={0.4} />
                   <stop offset="100%" stopColor="#ef4444" stopOpacity={0} />
                 </linearGradient>
-                <linearGradient id="scoreGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#f59e0b" stopOpacity={0.2} />
-                  <stop offset="100%" stopColor="#f59e0b" stopOpacity={0} />
+                <linearGradient id="normGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#00f0ff" stopOpacity={0.25} />
+                  <stop offset="100%" stopColor="#00f0ff" stopOpacity={0} />
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
               <XAxis dataKey="day" stroke="#64748b" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
-              <YAxis stroke="#64748b" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+              <YAxis yAxisId="count" stroke="#64748b" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} allowDecimals={false} />
+              <YAxis yAxisId="score" orientation="right" stroke="#f59e0b" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} domain={[0, 100]} />
               <Tooltip content={<CustomTooltip />} />
-              <Area type="monotone" dataKey="fraud" stroke="#ef4444" fill="url(#fraudGrad)" strokeWidth={2} dot={{ r: 3, fill: "#ef4444", strokeWidth: 0 }} />
-              <Line type="monotone" dataKey="score" stroke="#f59e0b" strokeWidth={2} dot={false} name="Risk Score" strokeDasharray="4 2" />
+              <Area yAxisId="count" type="monotone" dataKey="normal" name="Normal" stroke="#00f0ff" fill="url(#normGrad)" strokeWidth={2} dot={false} />
+              <Area yAxisId="count" type="monotone" dataKey="fraud" name="Fraud" stroke="#ef4444" fill="url(#fraudGrad)" strokeWidth={2} dot={{ r: 3, fill: "#ef4444", strokeWidth: 0 }} />
+              <Line yAxisId="score" type="monotone" dataKey="score" stroke="#f59e0b" strokeWidth={2} dot={false} name="Avg Risk Score" strokeDasharray="4 2" />
             </AreaChart>
           </ResponsiveContainer>
         </div>
       </Widget>
 
-      <Widget title="Anomaly Detection" subtitle="ML-based outlier analysis" className="delay-5 scan-line">
+      <Widget title="Anomaly Detection" subtitle="ML fraud probability distribution" className="delay-5 scan-line">
         <div className="h-56">
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={trendData.length > 0 ? trendData : []}>
+            <BarChart data={mlData.length > 0 ? mlData : []}>
               <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-              <XAxis dataKey="day" stroke="#64748b" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
-              <YAxis stroke="#64748b" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+              <XAxis dataKey="range" stroke="#64748b" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+              <YAxis stroke="#64748b" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} allowDecimals={false} />
               <Tooltip content={<CustomTooltip />} />
-              <Bar dataKey="fraud" fill="#ef4444" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="count" name="Txns" radius={[4, 4, 0, 0]}>
+                {mlData.map((_: any, i: number) => (
+                  <Cell key={i} fill={SCORE_COLORS[i % SCORE_COLORS.length]} />
+                ))}
+              </Bar>
             </BarChart>
           </ResponsiveContainer>
         </div>
       </Widget>
 
       <Widget title="Suspicious Geography" subtitle="High-risk regions" className="delay-5 scan-line">
-        <div className="h-56">
+        <div className="h-48">
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
-              <Pie data={geoData.length > 0 ? geoData : [{ region: "No Data", value: 100 }]} cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={4} dataKey="value">
-                {(geoData.length > 0 ? geoData : [{ region: "No Data", value: 100 }]).map((_: any, i: number) => (
+              <Pie data={geoData.length > 0 ? geoData : [{ region: "No Data", name: "No Data", value: 1 }]} cx="50%" cy="50%" innerRadius={42} outerRadius={70} paddingAngle={3} dataKey="value">
+                {(geoData.length > 0 ? geoData : [{ region: "No Data", value: 1 }]).map((_: any, i: number) => (
                   <Cell key={i} fill={COLORS[i % COLORS.length]} />
                 ))}
               </Pie>
               <Tooltip content={<CustomTooltip />} />
             </PieChart>
           </ResponsiveContainer>
-          <div className="grid grid-cols-2 gap-1.5 mt-2">
-            {(geoData.length > 0 ? geoData : []).map((d: any, i: number) => (
-              <div key={d.region} className="flex items-center gap-2 text-xs">
-                <span className="w-2 h-2 rounded-full" style={{ background: COLORS[i] }} />
-                <span className="text-[#94a3b8]">{d.region}</span>
-                <span className="text-white ml-auto font-medium">{d.value}%</span>
-              </div>
-            ))}
-          </div>
+        </div>
+        <div className="mt-3 space-y-1.5">
+          {(geoData.length > 0 ? geoData : []).map((d: any, i: number) => (
+            <div key={d.region} className="flex items-center gap-2 text-xs">
+              <span className="w-2 h-2 rounded-full shrink-0" style={{ background: COLORS[i] }} />
+              <span className="text-[#94a3b8] truncate">{d.region}</span>
+              <span className="text-white ml-auto font-medium tabular-nums">{d.value.toLocaleString()} · {d.pct}%</span>
+            </div>
+          ))}
         </div>
       </Widget>
 
@@ -198,8 +252,8 @@ export default function AnalyticsWidgets() {
               <XAxis type="number" stroke="#64748b" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
               <YAxis dataKey="channel" type="category" stroke="#64748b" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
               <Tooltip content={<CustomTooltip />} />
-              <Bar dataKey="approved" fill="#22ff8b" radius={[0, 4, 4, 0]} name="Approved" />
-              <Bar dataKey="blocked" fill="#ef4444" radius={[0, 4, 4, 0]} name="Blocked" />
+              <Bar dataKey="approved" stackId="a" fill="#22ff8b" name="Approved" />
+              <Bar dataKey="blocked" stackId="a" fill="#ef4444" radius={[0, 4, 4, 0]} name="Blocked" />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -236,6 +290,24 @@ export default function AnalyticsWidgets() {
               </div>
             ))}
           </div>
+        </div>
+      </Widget>
+
+      <Widget title="Top Merchants" subtitle="Highest-traffic merchants by avg risk" className="lg:col-span-2 delay-6 scan-line">
+        <div className="h-56">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={merchantData} layout="vertical" margin={{ left: 0, right: 16 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" horizontal={false} />
+              <XAxis type="number" stroke="#64748b" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} allowDecimals={false} />
+              <YAxis dataKey="merchant" type="category" width={120} stroke="#64748b" tick={{ fontSize: 10 }} axisLine={false} tickLine={false} />
+              <Tooltip content={<CustomTooltip />} />
+              <Bar dataKey="count" name="Txns" radius={[0, 4, 4, 0]}>
+                {merchantData.map((d: any, i: number) => (
+                  <Cell key={i} fill={SCORE_COLORS[Math.min(4, Math.max(0, Math.floor(d.score / 20)))]} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
         </div>
       </Widget>
     </>

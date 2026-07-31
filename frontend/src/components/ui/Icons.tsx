@@ -59,4 +59,13 @@ export const Icons = {
   receive: createIcon("path M2 2l20 11-9 4-4 9L2 2z"),
   wallet: createIcon("rect x=\"1\" y=\"4\" width=\"22\" height=\"16\" rx=\"2\"|path M1 8h22|circle cx=\"17\" cy=\"14\" r=\"1\""),
   refresh: createIcon("polyline 23 4 23 10 17 10|path M20.49 15a9 9 0 1 1-2.12-9.36L23 10"),
+  sliders: createIcon("line x1=\"4\" y1=\"21\" x2=\"4\" y2=\"14\"|line x1=\"4\" y1=\"10\" x2=\"4\" y2=\"3\"|line x1=\"12\" y1=\"21\" x2=\"12\" y2=\"12\"|line x1=\"12\" y1=\"8\" x2=\"12\" y2=\"3\"|line x1=\"20\" y1=\"21\" x2=\"20\" y2=\"16\"|line x1=\"20\" y1=\"12\" x2=\"20\" y2=\"3\"|line x1=\"1\" y1=\"14\" x2=\"7\" y2=\"14\"|line x1=\"9\" y1=\"8\" x2=\"15\" y2=\"8\"|line x1=\"17\" y1=\"16\" x2=\"23\" y2=\"16\""),
+  cpu: createIcon("rect x=\"4\" y=\"4\" width=\"16\" height=\"16\" rx=\"2\"|rect x=\"9\" y=\"9\" width=\"6\" height=\"6\"|line x1=\"9\" y1=\"1\" x2=\"9\" y2=\"4\"|line x1=\"15\" y1=\"1\" x2=\"15\" y2=\"4\"|line x1=\"9\" y1=\"20\" x2=\"9\" y2=\"23\"|line x1=\"15\" y1=\"20\" x2=\"15\" y2=\"23\"|line x1=\"20\" y1=\"9\" x2=\"23\" y2=\"9\"|line x1=\"20\" y1=\"14\" x2=\"23\" y2=\"14\"|line x1=\"1\" y1=\"9\" x2=\"4\" y2=\"9\"|line x1=\"1\" y1=\"14\" x2=\"4\" y2=\"14\""),
+  database: createIcon("path M12 2c4.97 0 9 1.34 9 3v14c0 1.66-4.03 3-9 3s-9-1.34-9-3V5c0-1.66 4.03-3 9-3z|path M21 5c0 1.66-4.03 3-9 3S3 6.66 3 5|path M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"),
+  layers: createIcon("path M12 2L2 7l10 5 10-5-10-5z|path M2 17l10 5 10-5|path M2 12l10 5 10-5"),
+  shieldCheck: createIcon("path M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z|polyline 9 12 11 14 15 10"),
+  listChecks: createIcon("line x1=\"10\" y1=\"6\" x2=\"21\" y2=\"6\"|line x1=\"10\" y1=\"12\" x2=\"21\" y2=\"12\"|line x1=\"10\" y1=\"18\" x2=\"21\" y2=\"18\"|polyline 3 6 4 7 6 5|polyline 3 12 4 13 6 11|polyline 3 18 4 19 6 17"),
+  nodes: createIcon("circle cx=\"18\" cy=\"5\" r=\"3\"|circle cx=\"6\" cy=\"12\" r=\"3\"|circle cx=\"18\" cy=\"19\" r=\"3\"|line x1=\"8.59\" y1=\"13.51\" x2=\"15.42\" y2=\"17.49\"|line x1=\"15.41\" y1=\"6.51\" x2=\"8.59\" y2=\"10.49\""),
+  play: createIcon("polygon 5 3 19 12 5 21 5 3"),
+  pause: createIcon("rect x=\"6\" y=\"4\" width=\"4\" height=\"16\"|rect x=\"14\" y=\"4\" width=\"4\" height=\"16\""),
 };

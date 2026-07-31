@@ -156,20 +156,27 @@ class SupabaseService {
   }
 
   async getTransactions(limit = 100): Promise<Transaction[]> {
+    const pageSize = 1000;
+    const all: Transaction[] = [];
     try {
-      const res = await fetch(`/api/proxy?path=transactions&limit=${limit}&offset=0`);
-      if (res.ok) {
+      for (let offset = 0; offset < limit; offset += pageSize) {
+        const size = Math.min(pageSize, limit - offset);
+        const res = await fetch(`/api/proxy?path=transactions&limit=${size}&offset=${offset}`);
+        if (!res.ok) throw new Error("ML proxy error");
         const json = await res.json();
-        return json.data as Transaction[];
+        const page = (json.data || []) as Transaction[];
+        all.push(...page);
+        if (page.length < size) break;
       }
-    } catch { /* fallback */ }
-
-    const { data } = await this.getClient()
-      .from("transactions")
-      .select("*")
-      .order("timestamp", { ascending: false })
-      .limit(limit);
-    return (data || []) as Transaction[];
+    } catch {
+      const { data } = await this.getClient()
+        .from("transactions")
+        .select("*")
+        .order("timestamp", { ascending: false })
+        .limit(Math.min(limit, 1000));
+      return (data || []) as Transaction[];
+    }
+    return all;
   }
 
   async getTransaction(id: number): Promise<Transaction | null> {

@@ -8,6 +8,7 @@ import FraudHealthCards from "@/components/dashboard/FraudHealthCards";
 import TransactionTable from "@/components/transactions/TransactionTable";
 import TransactionDrawer from "@/components/transactions/TransactionDrawer";
 import AnalyticsWidgets from "@/components/analytics/AnalyticsWidgets";
+import DetectionFlow from "@/components/flow/DetectionFlow";
 import CaseManagement from "@/components/cases/CaseManagement";
 import TransferView from "@/components/transfer/TransferView";
 import BankingOverview from "@/components/dashboard/BankingOverview";
@@ -44,6 +45,7 @@ export default function Dashboard() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [stats, setStats] = useState<DashboardStats>(emptyStats);
   const [dataLoading, setDataLoading] = useState(true);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const { user, loading } = useAuth();
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
@@ -52,7 +54,7 @@ export default function Dashboard() {
     setDataLoading(true);
     const [fetchedStats, fetchedTxs] = await Promise.all([
       supabase.getStats(),
-      supabase.getTransactions(10000),
+      supabase.getTransactions(1000),
     ]);
     setStats(fetchedStats);
     setTransactions(fetchedTxs);
@@ -90,9 +92,9 @@ export default function Dashboard() {
   return (
     <ProtectedRoute>
     <div className="flex min-h-screen cyber-grid" style={{ background: "#0a0e1a" }}>
-      <Sidebar active={activeSection} onNavigate={setActiveSection} />
+      <Sidebar active={activeSection} onNavigate={setActiveSection} collapsed={sidebarCollapsed} onToggleCollapsed={() => setSidebarCollapsed(!sidebarCollapsed)} />
 
-      <div className="flex-1 ml-64 min-h-screen flex flex-col">
+      <div className={`flex-1 min-h-screen flex flex-col transition-all duration-300 ${sidebarCollapsed ? "ml-[72px]" : "ml-64"}`}>
         <Header />
 
         <main className="flex-1 p-6 lg:p-8 space-y-6 max-w-[1600px] mx-auto w-full relative z-10">
@@ -100,6 +102,8 @@ export default function Dashboard() {
             <BankingOverview onNavigate={setActiveSection} />
           ) : activeSection === "banking" ? (
             <TransferView />
+          ) : activeSection === "flow" ? (
+            <DetectionFlow transactions={transactions} />
           ) : (
             <>
               <div className="animate-fade-in">
