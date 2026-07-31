@@ -152,7 +152,7 @@ export default function TransactionTable({ transactions, onSelect }: Props) {
                           }}
                         />
                       </div>
-                      <span className="text-[11px] text-[#64748b] font-mono">{(tx.ml_fraud_probability || 0 * 100).toFixed(0)}%</span>
+                      <span className="text-[11px] text-[#64748b] font-mono">{((tx.ml_fraud_probability || 0) * 100).toFixed(0)}%</span>
                     </div>
                   </td>
                   <td className="px-4 py-3.5 text-right">

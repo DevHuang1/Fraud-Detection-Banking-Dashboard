@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { supabase, type DashboardStats } from "@/lib/supabase";
 
 interface CardConfig {
@@ -55,14 +55,15 @@ const cards: CardConfig[] = [
 export default function FraudHealthCards() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
 
-  const loadStats = useCallback(async () => {
-    const data = await supabase.getStats();
-    setStats(data);
-  }, []);
-
   useEffect(() => {
-    loadStats();
-  }, [loadStats]);
+    let active = true;
+    supabase.getStats().then((data) => {
+      if (active) setStats(data);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   if (!stats) {
     return (

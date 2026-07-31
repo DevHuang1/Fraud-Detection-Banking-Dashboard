@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import keras
 import requests
+from concurrent.futures import ThreadPoolExecutor
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -91,6 +92,13 @@ class TransactionText(BaseModel):
     country: Optional[str] = ""
     risk_score: Optional[float] = 0.0
     risk_level: Optional[str] = "low"
+
+
+class StatusUpdate(BaseModel):
+    status: Optional[str] = None
+    is_fraud: Optional[bool] = None
+    is_suspicious: Optional[bool] = None
+    risk_level: Optional[str] = None
 
 
 class PredictionResponse(BaseModel):
@@ -301,55 +309,99 @@ SUPABASE_HEADERS = {"apikey": SUPABASE_SERVICE_KEY, "Authorization": f"Bearer {S
 if not SUPABASE_SERVICE_KEY:
     print("[warn] SUPABASE_SERVICE_KEY not set — proxy endpoints disabled")
 
+SESSION = requests.Session()
+SESSION.headers.update(SUPABASE_HEADERS)
+SUPABASE_TIMEOUT = (3, 30)
+
+
+def supabase_get(path, params=None):
+    """GET against the Supabase REST API with a shared session and timeout."""
+    r = SESSION.get(f"{SUPABASE_URL}/rest/v1/{path}", params=params, timeout=SUPABASE_TIMEOUT)
+    r.raise_for_status()
+    return r
+
+
+def supabase_count(path, params=None):
+    """Return the exact row count for a filtered query."""
+    r = supabase_get(path, params={"select": "count", **(params or {})})
+    data = r.json()
+    return data[0]["count"] if isinstance(data, list) and data else 0
+
 
 @app.get("/api/stats")
 def proxy_stats():
-    """Return aggregated dashboard stats (paginates through all rows)."""
+    """Return aggregated dashboard stats using Postgres-side counts (fast)."""
     if not SUPABASE_SERVICE_KEY:
         raise HTTPException(503, "Service key not configured")
     try:
-        offset = 0
-        page_size = 1000
-        txs = []
-        while True:
-            r = requests.get(f"{SUPABASE_URL}/rest/v1/transactions", headers=SUPABASE_HEADERS,
-                params={"select": "status,risk_level,is_fraud,is_suspicious,risk_score,amount",
-                        "limit": page_size, "offset": offset})
-            page = r.json()
-            if not page:
-                break
-            txs.extend(page)
-            offset += page_size
-            if len(page) < page_size:
-                break
+        # Counts are computed in Postgres via PostgREST — no full-table fetch.
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            f_total = pool.submit(supabase_count, "transactions")
+            f_suspicious = pool.submit(supabase_count, "transactions", {"is_suspicious": "eq.true"})
+            f_confirmed = pool.submit(supabase_count, "transactions", {"is_fraud": "eq.true"})
+            f_blocked = pool.submit(supabase_count, "transactions", {"status": "eq.blocked"})
+            f_high_risk = pool.submit(supabase_count, "transactions", {"risk_level": "in.(high,critical)"})
+            f_unread = pool.submit(supabase_count, "alerts", {"is_read": "eq.false"})
 
-        total = len(txs)
-        suspicious = sum(1 for t in txs if t.get("is_suspicious"))
-        confirmed = sum(1 for t in txs if t.get("is_fraud"))
-        blocked = sum(1 for t in txs if t.get("status") == "blocked")
-        high_risk = sum(1 for t in txs if t.get("risk_level") in ("high", "critical"))
-        avg_risk = round(sum(t.get("risk_score", 0) or 0 for t in txs) / max(total, 1), 2)
-        fraud_rate = round(confirmed / max(total, 1) * 100, 2)
+            total = f_total.result()
+            suspicious = f_suspicious.result()
+            confirmed = f_confirmed.result()
+            blocked = f_blocked.result()
+            high_risk = f_high_risk.result()
+            unread = f_unread.result()
 
-        offset2 = 0
-        unread = 0
-        while True:
-            r2 = requests.get(f"{SUPABASE_URL}/rest/v1/alerts", headers=SUPABASE_HEADERS,
-                params={"select": "id", "is_read": "eq.false", "limit": page_size, "offset": offset2})
-            page2 = r2.json()
-            if not page2:
-                break
-            unread += len(page2)
-            offset2 += page_size
-            if len(page2) < page_size:
-                break
+        # Avg risk score needs a sum: fetch only the risk_score column in parallel.
+        PAGE = 1000
+        pages = (total + PAGE - 1) // PAGE
+        if total == 0:
+            avg_risk = 0.0
+        else:
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                futures = [
+                    pool.submit(
+                        supabase_get, "transactions",
+                        {"select": "risk_score", "limit": PAGE, "offset": offset},
+                    )
+                    for offset in range(0, total, PAGE)
+                ]
+            risk_sum = sum(
+                float(row.get("risk_score") or 0)
+                for f in futures for row in f.result().json()
+            )
+            avg_risk = round(risk_sum / total, 2)
 
         return {"totalTransactions": total, "suspiciousTransactions": suspicious,
                 "confirmedFraud": confirmed, "blockedAttempts": blocked,
                 "avgRiskScore": avg_risk, "highRiskAccounts": high_risk,
-                "fraudRate": fraud_rate, "unreadAlerts": unread}
+                "fraudRate": round(confirmed / max(total, 1) * 100, 2),
+                "unreadAlerts": unread}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(500, f"Stats proxy failed: {e}")
+
+
+@app.patch("/api/transactions/{tx_id}")
+def update_transaction(tx_id: int, update: StatusUpdate):
+    """Update transaction status/flags via the service role (bypasses RLS)."""
+    if not SUPABASE_SERVICE_KEY:
+        raise HTTPException(503, "Service key not configured")
+    payload = update.model_dump(exclude_none=True)
+    if not payload:
+        raise HTTPException(400, "No fields to update")
+    try:
+        r = SESSION.patch(f"{SUPABASE_URL}/rest/v1/transactions?id=eq.{tx_id}",
+                          json=payload,
+                          headers={**SUPABASE_HEADERS, "Prefer": "return=representation"},
+                          timeout=SUPABASE_TIMEOUT)
+        if r.status_code >= 400:
+            raise HTTPException(502, f"Supabase update failed ({r.status_code}): {r.text[:200]}")
+        data = r.json()
+        return {"success": True, "data": data[0] if isinstance(data, list) and data else None}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Update proxy failed: {e}")
 
 
 @app.get("/api/transactions")
@@ -358,14 +410,17 @@ def proxy_transactions(limit: int = 100, offset: int = 0):
     if not SUPABASE_SERVICE_KEY:
         raise HTTPException(503, "Service key not configured")
     try:
-        r = requests.get(f"{SUPABASE_URL}/rest/v1/transactions", headers={
-            **SUPABASE_HEADERS, "Prefer": "count=exact"
-        }, params={"select": "*", "order": "timestamp.desc",
-                    "limit": limit, "offset": offset})
+        r = SESSION.get(f"{SUPABASE_URL}/rest/v1/transactions", params={
+            "select": "*", "order": "timestamp.desc",
+            "limit": limit, "offset": offset
+        }, headers={**SUPABASE_HEADERS, "Prefer": "count=exact"}, timeout=SUPABASE_TIMEOUT)
+        r.raise_for_status()
         data = r.json()
         cr = r.headers.get("content-range", "*/0")
         total = int(cr.split("/")[1]) if "/" in cr else len(data)
         return {"data": data, "total": total, "limit": limit, "offset": offset}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(500, f"Transactions proxy failed: {e}")
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { supabase, type Transaction } from "@/lib/supabase";
 
 function relativeTime(ts: string): string {
@@ -35,17 +35,18 @@ const statusColors: Record<string, string> = {
   Approved: "rgba(34,197,94,0.15) text-[#22c55e]",
 };
 
-export default function RecentTransactions() {
+export default function RecentTransactions({ onSelect }: { onSelect?: (tx: Transaction) => void }) {
   const [txns, setTxns] = useState<Transaction[]>([]);
 
-  const loadTxns = useCallback(async () => {
-    const data = await supabase.getTransactions(20);
-    setTxns(data);
-  }, []);
-
   useEffect(() => {
-    loadTxns();
-  }, [loadTxns]);
+    let active = true;
+    supabase.getTransactions(20).then((data) => {
+      if (active) setTxns(data);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   return (
     <div className="glass-card rounded-2xl p-6 animate-slide-up delay-5">
@@ -54,9 +55,6 @@ export default function RecentTransactions() {
           <h3 className="text-base font-semibold text-white">Recent Transactions</h3>
           <p className="text-xs text-[#64748b] mt-0.5">Latest flagged activity requiring attention</p>
         </div>
-        <button className="text-xs text-blue-400 hover:text-blue-300 transition-colors font-medium">
-          View All
-        </button>
       </div>
 
       <div className="overflow-x-auto">
@@ -105,7 +103,10 @@ export default function RecentTransactions() {
                     <span className="text-[#64748b] text-xs">{relativeTime(tx.timestamp)}</span>
                   </td>
                   <td className="py-3.5 text-right">
-                    <button className="opacity-0 group-hover:opacity-100 transition-opacity w-7 h-7 rounded-lg bg-[#1e293b] border border-[#334155] flex items-center justify-center hover:border-blue-500/30">
+                    <button
+                      onClick={() => onSelect?.(tx)}
+                      className="opacity-0 group-hover:opacity-100 transition-opacity w-7 h-7 rounded-lg bg-[#1e293b] border border-[#334155] flex items-center justify-center hover:border-blue-500/30"
+                    >
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <polyline points="9 18 15 12 9 6" />
                       </svg>

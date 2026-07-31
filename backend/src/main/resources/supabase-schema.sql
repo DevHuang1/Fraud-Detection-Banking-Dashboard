@@ -167,6 +167,14 @@ do $$ begin
 exception when duplicate_object then null;
 end $$;
 
+do $$ begin
+  create policy "Investigators and admins can create cases" on public.fraud_cases
+    for insert with check (
+      exists (select 1 from public.user_profiles where id = auth.uid() and role in ('investigator','admin'))
+    );
+exception when duplicate_object then null;
+end $$;
+
 -- 4. CASE NOTES
 create table if not exists public.case_notes (
   id bigint generated always as identity primary key,
@@ -263,9 +271,13 @@ exception when duplicate_object then null;
 end $$;
 
 do $$ begin
-  create policy "Admins can update fraud rules" on public.fraud_rules
+  drop policy if exists "Admins can update fraud rules" on public.fraud_rules;
+end $$;
+
+do $$ begin
+  create policy "Investigators and admins can update fraud rules" on public.fraud_rules
     for update using (
-      exists (select 1 from public.user_profiles where id = auth.uid() and role = 'admin')
+      exists (select 1 from public.user_profiles where id = auth.uid() and role in ('investigator','admin'))
     );
 exception when duplicate_object then null;
 end $$;

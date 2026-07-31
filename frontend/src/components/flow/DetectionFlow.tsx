@@ -202,8 +202,8 @@ export default function DetectionFlow({ transactions }: { transactions: Transact
         const t = setTimeout(() => selectIndex(idx + 1), 1500 / speed);
         return () => clearTimeout(t);
       }
-      setPlaying(false);
-      return;
+      const t = setTimeout(() => setPlaying(false), 0);
+      return () => clearTimeout(t);
     }
     const t = setTimeout(
       () => {
@@ -279,20 +279,6 @@ export default function DetectionFlow({ transactions }: { transactions: Transact
       </button>
     );
   };
-
-  const controlBtn = (onClick: () => void, children: React.ReactNode, title: string, active?: boolean) => (
-    <button
-      onClick={onClick}
-      title={title}
-      className={`h-9 px-3 rounded-lg text-xs font-medium border transition-all flex items-center gap-1.5 ${
-        active
-          ? "bg-[#00f0ff]/15 border-[#00f0ff]/50 text-[#00f0ff]"
-          : "bg-[#1e293b]/60 border-[#334155] text-[#94a3b8] hover:text-white hover:border-[#00f0ff]/30"
-      }`}
-    >
-      {children}
-    </button>
-  );
 
   return (
     <div className="space-y-5 animate-fade-in">
@@ -606,7 +592,7 @@ export default function DetectionFlow({ transactions }: { transactions: Transact
           </div>
           <div ref={logRef} className="flex-1 overflow-y-auto p-4 font-mono text-xs space-y-2 bg-[#060a12]/40 h-[300px]">
             {log.length === 0 && (
-              <p className="text-[#475569]">// waiting for first stage to complete...</p>
+              <p className="text-[#475569]">{"// waiting for first stage to complete..."}</p>
             )}
             {log.map((l) => {
               const c = TONE_COLORS[l.tone];

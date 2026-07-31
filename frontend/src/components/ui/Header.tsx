@@ -1,20 +1,22 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { Icons } from "./Icons";
 import { supabase } from "@/lib/supabase";
 
 export default function Header() {
   const [throughput, setThroughput] = useState("--");
 
-  const loadStats = useCallback(async () => {
-    const stats = await supabase.getStats();
-    setThroughput(`${(stats.totalTransactions / 24).toLocaleString(undefined, { maximumFractionDigits: 0 })}`);
-  }, []);
-
   useEffect(() => {
-    loadStats();
-  }, [loadStats]);
+    let active = true;
+    supabase.getStats().then((stats) => {
+      if (!active) return;
+      setThroughput(`${(stats.totalTransactions / 24).toLocaleString(undefined, { maximumFractionDigits: 0 })}`);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   return (
     <header

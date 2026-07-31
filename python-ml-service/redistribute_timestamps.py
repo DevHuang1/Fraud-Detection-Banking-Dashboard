@@ -2,8 +2,9 @@
 Redistribute existing transaction/alerts/case timestamps evenly across the
 last 30 days so the dashboard trend isn't clustered on one day.
 
-Fast path: fetches all ids, buckets them into ~2-hour timestamp groups, and
-issues ONE bulk PATCH per group (id=in.(...)), instead of one request per row.
+Every row gets its own unique timestamp, spread monotonically across the
+span (oldest id -> oldest timestamp), so the live feed shows distinct times
+instead of rows sharing one bucket timestamp.
 
 Run once:
   export SUPABASE_SERVICE_KEY=your-service-role-key
@@ -11,6 +12,7 @@ Run once:
 """
 import os, random, time
 from datetime import datetime, timedelta, timezone
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 
 SUPABASE_URL = "https://cllohfvwvhfncgihrnvx.supabase.co"
@@ -20,7 +22,7 @@ H = {"apikey": SUPABASE_SERVICE_KEY, "Authorization": f"Bearer {SUPABASE_SERVICE
      "Content-Type": "application/json"}
 
 SPAN_DAYS = 30
-BUCKETS_PER_DAY = 12  # one timestamp bucket every ~2 hours
+WORKERS = 40
 
 _session = requests.Session()
 
@@ -41,29 +43,24 @@ def fetch_ids(table):
     return ids
 
 
-def build_buckets(ids):
-    """Group ids into timestamp buckets spread over the last SPAN_DAYS days."""
+def build_timestamps(ids):
+    """One unique timestamp per row, spread evenly over the last SPAN_DAYS."""
     n = len(ids)
-    total_buckets = SPAN_DAYS * BUCKETS_PER_DAY
     now = datetime.now(timezone.utc)
     span = timedelta(days=SPAN_DAYS)
-    chunks: dict[int, list] = {}
-    chunk_ts: dict[int, str] = {}
-    for i, tid in enumerate(ids):
-        b = int(i * total_buckets / max(n, 1))
-        if b not in chunks:
-            day_frac = b / total_buckets
-            ts = now - span + span * day_frac
-            ts += timedelta(minutes=random.randint(0, 119))
-            chunk_ts[b] = ts.isoformat()
-            chunks[b] = []
-        chunks[b].append(tid)
-    return chunks, chunk_ts
+    stamps = []
+    for i in range(n):
+        ts = now - span + span * (i + 0.5) / max(n, 1)
+        ts += timedelta(seconds=random.randint(0, 119),
+                        microseconds=random.randint(0, 999999))
+        stamps.append(ts.isoformat())
+    return stamps
 
 
-def patch_group(table, field, ids, value):
-    url = f"{SUPABASE_URL}/rest/v1/{table}?id=in.({','.join(map(str, ids))})"
-    return _session.patch(url, headers=H, json={field: value}).status_code
+def patch_row(table, field, tid, value):
+    url = f"{SUPABASE_URL}/rest/v1/{table}?id=eq.{tid}"
+    r = _session.patch(url, headers=H, json={field: value}, timeout=(3, 30))
+    return tid, r.status_code
 
 
 def redistribute(table, field):
@@ -73,17 +70,21 @@ def redistribute(table, field):
     if not ids:
         return
 
-    chunks, chunk_ts = build_buckets(ids)
+    stamps = build_timestamps(ids)
     t0 = time.time()
     ok = fails = 0
-    for b in sorted(chunks):
-        code = patch_group(table, field, chunks[b], chunk_ts[b])
-        if code in (200, 204):
-            ok += 1
-        else:
-            fails += 1
-            print(f"   bucket {b}: HTTP {code}")
-    print(f"   {table}: {ok} buckets updated, {fails} failed ({time.time()-t0:.1f}s)")
+    with ThreadPoolExecutor(max_workers=WORKERS) as pool:
+        fut = {pool.submit(patch_row, table, field, tid, ts): tid
+               for tid, ts in zip(ids, stamps)}
+        for f in as_completed(fut):
+            tid, code = f.result()
+            if code in (200, 204):
+                ok += 1
+            else:
+                fails += 1
+                if fails <= 5:
+                    print(f"   row {tid}: HTTP {code}")
+    print(f"   {table}: {ok} rows updated, {fails} failed ({time.time()-t0:.1f}s)")
 
 
 def main():

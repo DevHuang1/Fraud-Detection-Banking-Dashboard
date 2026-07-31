@@ -1,7 +1,7 @@
 import { createClient as createBrowserClient } from "@/utils/supabase/client";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { RealtimePostgresChangesPayload, Session, SupabaseClient, User } from "@supabase/supabase-js";
 
-const ML_API = process.env.NEXT_PUBLIC_ML_API_URL || "http://localhost:5001";
+type RealtimeRow = { [key: string]: string | number | boolean | null };
 
 export interface Transaction {
   id: number;
@@ -104,7 +104,7 @@ class SupabaseService {
     return this.client;
   }
 
-  async login(email: string, password: string): Promise<{ user?: any; session?: any; error?: string }> {
+  async login(email: string, password: string): Promise<{ user?: User; session?: Session; error?: string }> {
     const { data, error } = await this.getClient().auth.signInWithPassword({
       email,
       password,
@@ -134,14 +134,15 @@ class SupabaseService {
     } catch { /* fallback to direct query */ }
 
     const client = this.getClient();
-    const { data: txs } = await client.from("transactions").select("status,risk_level,is_fraud,is_suspicious,risk_score,amount");
+    type TxRow = Pick<Transaction, "status" | "risk_level" | "is_fraud" | "is_suspicious" | "risk_score">;
+    const { data: txs } = (await client.from("transactions").select("status,risk_level,is_fraud,is_suspicious,risk_score,amount")) as unknown as { data: TxRow[] | null };
     const { data: alerts } = await client.from("alerts").select("id").eq("is_read", false);
     const total = txs?.length || 0;
-    const suspicious = txs?.filter((t: any) => t.is_suspicious).length || 0;
-    const confirmedFraud = txs?.filter((t: any) => t.is_fraud).length || 0;
-    const blocked = txs?.filter((t: any) => t.status === "blocked").length || 0;
-    const avgRisk = (txs || []).reduce((s: number, t: any) => s + (t.risk_score || 0), 0) / (total || 1);
-    const highRisk = txs?.filter((t: any) => t.risk_level === "high" || t.risk_level === "critical").length || 0;
+    const suspicious = txs?.filter((t) => t.is_suspicious).length || 0;
+    const confirmedFraud = txs?.filter((t) => t.is_fraud).length || 0;
+    const blocked = txs?.filter((t) => t.status === "blocked").length || 0;
+    const avgRisk = (txs || []).reduce((s: number, t) => s + (t.risk_score || 0), 0) / (total || 1);
+    const highRisk = txs?.filter((t) => t.risk_level === "high" || t.risk_level === "critical").length || 0;
     const fraudRate = total > 0 ? (confirmedFraud / total) * 100 : 0;
     return {
       totalTransactions: total,
@@ -179,6 +180,62 @@ class SupabaseService {
     return all;
   }
 
+  async updateTransactionStatus(
+    id: number,
+    updates: Partial<Pick<Transaction, "status" | "is_fraud" | "is_suspicious" | "risk_level">>,
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      const res = await fetch(`/api/proxy?path=/api/transactions/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updates),
+      });
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success) return { success: true };
+        return { success: false, error: json.error || "Update failed" };
+      }
+    } catch {
+      /* fall back to direct client update below */
+    }
+
+    try {
+      const { data, error } = await this.getClient()
+        .from("transactions")
+        .update(updates)
+        .eq("id", id)
+        .select()
+        .single();
+      if (error) return { success: false, error: error.message };
+      if (!data) return { success: false, error: "Transaction not found" };
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : "Update failed" };
+    }
+  }
+
+  async getRelatedTransactions(tx: Transaction, limit = 50): Promise<Transaction[]> {
+    const q = (v: string) => `"${v.replace(/"/g, "")}"`;
+    const filters: string[] = [];
+    if (tx.account_id) filters.push(`account_id.eq.${q(tx.account_id)}`);
+    if (tx.device_id) filters.push(`device_id.eq.${q(tx.device_id)}`);
+    if (tx.ip_address) filters.push(`ip_address.eq.${q(tx.ip_address)}`);
+    if (tx.card_last_four) filters.push(`card_last_four.eq.${q(tx.card_last_four)}`);
+    if (filters.length === 0) return [];
+
+    try {
+      const { data } = await this.getClient()
+        .from("transactions")
+        .select("*")
+        .or(filters.join(","))
+        .order("timestamp", { ascending: false })
+        .limit(limit);
+      return ((data || []) as Transaction[]).filter((t) => t.id !== tx.id);
+    } catch {
+      return [];
+    }
+  }
+
   async getTransaction(id: number): Promise<Transaction | null> {
     const { data } = await this.getClient()
       .from("transactions")
@@ -206,6 +263,26 @@ class SupabaseService {
     return data;
   }
 
+  async createCase(data: {
+    title: string;
+    description?: string;
+    severity?: FraudCase["severity"];
+    fraud_type?: string;
+    amount_at_risk?: number;
+    assigned_to?: string;
+    assigned_by?: string;
+    transaction_id?: number;
+  }): Promise<{ success: boolean; error?: string; id?: number }> {
+    const case_number = `FC-${Date.now().toString().slice(-8)}-${Math.floor(Math.random() * 900 + 100)}`;
+    const { data: row, error } = await this.getClient()
+      .from("fraud_cases")
+      .insert({ ...data, case_number, status: "open", is_confirmed_fraud: false })
+      .select("id")
+      .single();
+    if (error) return { success: false, error: error.message };
+    return { success: true, id: row.id };
+  }
+
   async getAlerts(): Promise<Alert[]> {
     const { data } = await this.getClient()
       .from("alerts")
@@ -215,14 +292,14 @@ class SupabaseService {
     return (data || []) as Alert[];
   }
 
-  async getUserProfile(userId: string): Promise<{ role: string | null } | null> {
+  async getUserProfile(userId: string): Promise<{ role: string | null; full_name: string | null; email: string | null } | null> {
     try {
       const { data } = await this.getClient()
         .from("user_profiles")
-        .select("role")
+        .select("role,full_name,email")
         .eq("id", userId)
         .single();
-      return data as { role: string | null } | null;
+      return data as { role: string | null; full_name: string | null; email: string | null } | null;
     } catch {
       return null;
     }
@@ -246,6 +323,29 @@ class SupabaseService {
       .order("created_at", { ascending: false })
       .limit(20);
     return (data || []) as Transfer[];
+  }
+
+  async getUsernamesByAccountNumbers(accountNumbers: string[]): Promise<Record<string, string>> {
+    if (accountNumbers.length === 0) return {};
+    const { data, error } = await this.getClient().rpc("resolve_account_usernames", {
+      account_numbers: accountNumbers,
+    });
+    if (error || !data) return {};
+    return (data as Record<string, string>) || {};
+  }
+
+  async getUsernamesByAccountIds(accountIds: number[]): Promise<Record<number, string>> {
+    if (accountIds.length === 0) return {};
+    const { data, error } = await this.getClient().rpc("resolve_account_id_usernames", {
+      account_ids: accountIds,
+    });
+    if (error || !data) return {};
+    const out: Record<number, string> = {};
+    for (const [k, v] of Object.entries(data as Record<string, string>)) {
+      const id = Number(k);
+      if (!Number.isNaN(id)) out[id] = v;
+    }
+    return out;
   }
 
   async lookupRecipient(query: string): Promise<{ id: number; account_name: string; account_number: string; email: string } | null> {
@@ -276,14 +376,78 @@ class SupabaseService {
     return data || [];
   }
 
-  subscribeToChannel(channel: string, event: string, callback: (payload: any) => void) {
+  async updateRule(id: number, updates: Partial<{ name: string; description: string; severity: string; is_active: boolean; action: string }>) {
+    const { data, error } = await this.getClient()
+      .from("fraud_rules")
+      .update(updates)
+      .eq("id", id)
+      .select()
+      .single();
+    if (error) return { success: false, error: error.message };
+    return { success: true, data };
+  }
+
+  async getTransactionsByAccounts(accountNumbers: string[], limit = 50): Promise<Transaction[]> {
+    if (accountNumbers.length === 0) return [];
+    try {
+      const { data } = await this.getClient()
+        .from("transactions")
+        .select("*")
+        .in("account_id", accountNumbers)
+        .order("timestamp", { ascending: false })
+        .limit(limit);
+      return (data || []) as Transaction[];
+    } catch {
+      return [];
+    }
+  }
+
+  async listUsers(): Promise<{ id: string; email: string; full_name: string; role: string; created_at: string }[]> {
+    const { data } = await this.getClient()
+      .from("user_profiles")
+      .select("*")
+      .order("created_at", { ascending: false });
+    return (data || []) as { id: string; email: string; full_name: string; role: string; created_at: string }[];
+  }
+
+  async updateUserRole(userId: string, role: string) {
+    const { data, error } = await this.getClient()
+      .from("user_profiles")
+      .update({ role })
+      .eq("id", userId)
+      .select()
+      .single();
+    if (error) return { success: false, error: error.message };
+    return { success: true, data };
+  }
+
+  async createUserProfile(email: string, fullName: string, role: string): Promise<{ success: boolean; error?: string; id?: string }> {
+    const { data, error } = await this.getClient()
+      .from("user_profiles")
+      .insert({ email, full_name: fullName, role })
+      .select("id")
+      .single();
+    if (error) return { success: false, error: error.message };
+    return { success: true, id: data.id };
+  }
+
+  async deleteUserProfile(userId: string): Promise<{ success: boolean; error?: string }> {
+    const { error } = await this.getClient()
+      .from("user_profiles")
+      .delete()
+      .eq("id", userId);
+    if (error) return { success: false, error: error.message };
+    return { success: true };
+  }
+
+  subscribeToChannel(channel: string, event: "INSERT" | "UPDATE" | "DELETE", callback: (payload: RealtimePostgresChangesPayload<RealtimeRow>) => void) {
     const subscription = this.getClient()
       .channel(channel)
-      .on("postgres_changes" as any, {
-        event: event as any,
+      .on("postgres_changes", {
+        event,
         schema: "public",
         table: channel,
-      }, (payload: any) => callback(payload))
+      }, callback)
       .subscribe();
 
     return () => {

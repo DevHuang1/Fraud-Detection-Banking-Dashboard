@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { supabase } from "@/lib/supabase";
+import { useState, useEffect } from "react";
+import { supabase, type Transaction } from "@/lib/supabase";
 
 interface DayData {
   day: string;
@@ -11,7 +11,7 @@ interface DayData {
 
 const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-function aggregateByDay(txns: any[]): DayData[] {
+function aggregateByDay(txns: Transaction[]): DayData[] {
   const dayTotals: Record<string, { normal: number; fraud: number }> = {};
   for (let i = 0; i < 7; i++) {
     dayTotals[dayNames[i]] = { normal: 0, fraud: 0 };
@@ -27,14 +27,15 @@ function aggregateByDay(txns: any[]): DayData[] {
 export default function ActivityChart() {
   const [data, setData] = useState<DayData[]>([]);
 
-  const loadData = useCallback(async () => {
-    const txns = await supabase.getTransactions(1000);
-    setData(aggregateByDay(txns));
-  }, []);
-
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    let active = true;
+    supabase.getTransactions(1000).then((txns) => {
+      if (active) setData(aggregateByDay(txns));
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const maxNormal = data.length > 0 ? Math.max(...data.map((d) => d.normal)) : 1;
   const maxFraud = data.length > 0 ? Math.max(...data.map((d) => d.fraud)) : 1;

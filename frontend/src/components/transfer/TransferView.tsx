@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { Icons } from "@/components/ui/Icons";
 import { supabase, type Account, type Transfer } from "@/lib/supabase";
 import { useAuth } from "@/context/AuthContext";
@@ -8,29 +8,33 @@ import { useAuth } from "@/context/AuthContext";
 function CurrencyRates() {
   const [rates, setRates] = useState<{ pair: string; rate: string }[]>([]);
 
-  const loadRates = useCallback(async () => {
-    try {
-      const res = await fetch("https://open.er-api.com/v6/latest/USD");
-      const data = await res.json();
-      if (data.rates) {
-        setRates([
-          { pair: "USD/EUR", rate: data.rates.EUR?.toFixed(4) || "—" },
-          { pair: "USD/GBP", rate: data.rates.GBP?.toFixed(4) || "—" },
-          { pair: "USD/BTC", rate: (1 / (data.rates.BTC || 30000)).toFixed(8) },
-        ]);
-      }
-    } catch {
-      setRates([
-        { pair: "USD/EUR", rate: "0.92" },
-        { pair: "USD/GBP", rate: "0.79" },
-        { pair: "USD/BTC", rate: "0.000034" },
-      ]);
-    }
-  }, []);
-
   useEffect(() => {
-    loadRates();
-  }, [loadRates]);
+    let active = true;
+    const apply = (list: { pair: string; rate: string }[]) => {
+      if (active) setRates(list);
+    };
+    fetch("https://open.er-api.com/v6/latest/USD")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data?.rates) {
+          apply([
+            { pair: "USD/EUR", rate: data.rates.EUR?.toFixed(4) || "—" },
+            { pair: "USD/GBP", rate: data.rates.GBP?.toFixed(4) || "—" },
+            { pair: "USD/BTC", rate: (1 / (data.rates.BTC || 30000)).toFixed(8) },
+          ]);
+        }
+      })
+      .catch(() => {
+        apply([
+          { pair: "USD/EUR", rate: "0.92" },
+          { pair: "USD/GBP", rate: "0.79" },
+          { pair: "USD/BTC", rate: "0.000034" },
+        ]);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   return (
     <div className="glass-neon rounded-2xl p-5">
@@ -61,6 +65,7 @@ export default function TransferView() {
   const [success, setSuccess] = useState("");
   const [error, setError] = useState("");
   const [verifiedRecipient, setVerifiedRecipient] = useState<{ id: number; name: string; number: string; email: string } | null>(null);
+  const [usernames, setUsernames] = useState<Record<number, string>>({});
 
   const loadData = async () => {
     if (!user?.id) return;
@@ -69,12 +74,34 @@ export default function TransferView() {
     if (accs.length > 0) {
       const txns = await supabase.getTransfers(accs.map((a) => a.id));
       setTransfers(txns);
+      const ids = Array.from(new Set(txns.flatMap((t) => [t.sender_account_id, t.receiver_account_id])));
+      const names = await supabase.getUsernamesByAccountIds(ids);
+      setUsernames(names);
     }
     setLoading(false);
   };
 
   useEffect(() => {
-    loadData();
+    let active = true;
+    (async () => {
+      if (!user?.id) return;
+      const accs = await supabase.getAccounts(user.id);
+      if (!active) return;
+      setAccounts(accs);
+      if (accs.length > 0) {
+        const txns = await supabase.getTransfers(accs.map((a) => a.id));
+        if (!active) return;
+        setTransfers(txns);
+        const ids = Array.from(new Set(txns.flatMap((t) => [t.sender_account_id, t.receiver_account_id])));
+        const names = await supabase.getUsernamesByAccountIds(ids);
+        if (!active) return;
+        setUsernames(names);
+      }
+      setLoading(false);
+    })();
+    return () => {
+      active = false;
+    };
   }, [user?.id]);
 
   const mainAccount = accounts[0];
@@ -397,7 +424,8 @@ export default function TransferView() {
                 )}
                 {transfers.map((t) => {
                   const isReceived = accountIds.includes(t.receiver_account_id) && !accountIds.includes(t.sender_account_id);
-                  const counterpartyName = isReceived ? t.sender_name : t.receiver_name;
+                  const counterpartyId = isReceived ? t.sender_account_id : t.receiver_account_id;
+                  const counterpartyName = usernames[counterpartyId] || (isReceived ? t.sender_name : t.receiver_name);
                   return (
                     <div key={t.id} className="flex items-center gap-4 p-3 rounded-xl bg-[#1e293b]/50 border border-[#1e293b] hover:border-[#334155] transition-all">
                       <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${

@@ -1,16 +1,16 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { Icons } from "./Icons";
 import { useAuth, type UserRole } from "@/context/AuthContext";
 import { supabase } from "@/lib/supabase";
-
-interface NavItem {
+import { ROLE_COLOR, ROLE_LABEL } from "@/lib/roles";
+export interface NavItem {
   label: string;
   icon: string;
   key: string;
-  badge: string | null;
+  badge?: string | null;
   roles?: UserRole[];
 }
 
@@ -19,23 +19,25 @@ interface SidebarProps {
   onNavigate: (key: string) => void;
   collapsed: boolean;
   onToggleCollapsed: () => void;
+  sections?: NavItem[];
 }
 
-export default function Sidebar({ active, onNavigate, collapsed, onToggleCollapsed }: SidebarProps) {
+export default function Sidebar({ active, onNavigate, collapsed, onToggleCollapsed, sections }: SidebarProps) {
   const { user, hasRole, logout } = useAuth();
   const router = useRouter();
   const [caseCount, setCaseCount] = useState("12");
 
-  const loadCaseCount = useCallback(async () => {
-    const cases = await supabase.getCases();
-    setCaseCount(String(cases.length));
+  useEffect(() => {
+    let active = true;
+    supabase.getCases().then((cases) => {
+      if (active) setCaseCount(String(cases.length));
+    });
+    return () => {
+      active = false;
+    };
   }, []);
 
-  useEffect(() => {
-    loadCaseCount();
-  }, [loadCaseCount]);
-
-  const sections = useMemo<NavItem[]>(() => [
+  const defaultSections = useMemo<NavItem[]>(() => [
     { label: "Overview", icon: "dashboard", key: "overview", badge: null },
     { label: "Banking", icon: "wallet", key: "banking", badge: null },
     { label: "Transactions", icon: "activity", key: "transactions", badge: null, roles: ["analyst", "investigator", "admin"] },
@@ -47,7 +49,13 @@ export default function Sidebar({ active, onNavigate, collapsed, onToggleCollaps
     { label: "Team", icon: "users", key: "team", badge: null, roles: ["admin"] },
   ], [caseCount]);
 
-  const visibleSections = sections.filter((s) => !s.roles || hasRole(...s.roles));
+  const workspaceSections = useMemo<NavItem[]>(() => {
+    if (!sections) return [];
+    return sections.map((s) => (s.key === "cases" ? { ...s, badge: caseCount } : s));
+  }, [sections, caseCount]);
+
+  const sectionsList = sections ? workspaceSections : defaultSections;
+  const visibleSections = sectionsList.filter((s) => !s.roles || hasRole(...s.roles));
 
   const IconComponent = (name: string) => {
     const iconMap: Record<string, React.ReactNode> = {
@@ -127,17 +135,11 @@ export default function Sidebar({ active, onNavigate, collapsed, onToggleCollaps
             <div className="overflow-hidden">
               <span className="block text-sm font-medium text-white truncate">{user?.email?.split("@")[0] || "User"}</span>
               {user?.role ? (() => {
-                const roleColors: Record<string, { text: string; dot: string }> = {
-                  user: { text: "#64748b", dot: "#64748b" },
-                  analyst: { text: "#60a5fa", dot: "#60a5fa" },
-                  investigator: { text: "#a78bfa", dot: "#a78bfa" },
-                  admin: { text: "#fbbf24", dot: "#fbbf24" },
-                };
-                const colors = roleColors[user.role] || roleColors.user;
+                const colors = ROLE_COLOR[user.role] || ROLE_COLOR.user;
                 return (
                   <span className="flex items-center gap-1.5 text-xs" style={{ color: colors.text }}>
                     <span className="w-1.5 h-1.5 rounded-full" style={{ background: colors.dot }} />
-                    {user.role.charAt(0).toUpperCase() + user.role.slice(1)}
+                    {ROLE_LABEL[user.role] || user.role.charAt(0).toUpperCase() + user.role.slice(1)}
                   </span>
                 );
               })() : (

@@ -3,20 +3,21 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { useRouter } from "next/navigation";
+import { homePathForRole, type Role } from "@/lib/roles";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const { login, isAuthenticated, loading: authLoading } = useAuth();
+  const { login, isAuthenticated, loading: authLoading, user } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
     if (!authLoading && isAuthenticated) {
-      router.push("/");
+      router.push(homePathForRole(user?.role));
     }
-  }, [isAuthenticated, authLoading, router]);
+  }, [isAuthenticated, authLoading, router, user?.role]);
 
   if (authLoading || isAuthenticated) {
     return (
@@ -40,7 +41,8 @@ export default function LoginPage() {
     if (result.error) {
       setError(result.error);
     } else {
-      router.push("/");
+      const role = (result as { user?: { role: Role } }).user?.role;
+      router.push(homePathForRole(role));
     }
   };
 

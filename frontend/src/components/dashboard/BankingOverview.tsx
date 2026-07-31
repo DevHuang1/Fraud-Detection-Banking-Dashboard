@@ -20,6 +20,7 @@ export default function BankingOverview({ onNavigate }: BankingOverviewProps) {
   const { user } = useAuth();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [transfers, setTransfers] = useState<Transfer[]>([]);
+  const [usernames, setUsernames] = useState<Record<number, string>>({});
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -30,6 +31,9 @@ export default function BankingOverview({ onNavigate }: BankingOverviewProps) {
       if (accs.length > 0) {
         const txns = await supabase.getTransfers(accs.map((a) => a.id));
         setTransfers(txns);
+        const ids = Array.from(new Set(txns.flatMap((t) => [t.sender_account_id, t.receiver_account_id])));
+        const names = await supabase.getUsernamesByAccountIds(ids);
+        setUsernames(names);
       }
       setLoading(false);
     })();
@@ -175,8 +179,8 @@ export default function BankingOverview({ onNavigate }: BankingOverviewProps) {
           {transfers.slice(0, 5).map((t) => {
             const accountIds = accounts.map((a) => a.id);
             const isReceived = accountIds.includes(t.receiver_account_id) && !accountIds.includes(t.sender_account_id);
-            const isSent = accountIds.includes(t.sender_account_id);
-            const counterpartyName = isReceived ? t.sender_name : t.receiver_name;
+            const counterpartyId = isReceived ? t.sender_account_id : t.receiver_account_id;
+            const counterpartyName = usernames[counterpartyId] || (isReceived ? t.sender_name : t.receiver_name);
             return (
               <div key={t.id} className="flex items-center gap-4 p-3 rounded-xl hover:bg-[#1e293b]/50 transition-colors">
                 <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${

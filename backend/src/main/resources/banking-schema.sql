@@ -157,7 +157,50 @@ begin
 end;
 $$;
 
--- 5. UPDATE AUTO-CREATE TRIGGER to also create default checking account
+-- 5. USERNAME RESOLUTION (bypasses RLS for cross-user lookups)
+-- Resolve account numbers to the owning user's display name (full_name fallback email).
+create or replace function public.resolve_account_usernames(account_numbers text[])
+returns jsonb
+language plpgsql
+security definer
+as $$
+declare
+  result jsonb;
+begin
+  select coalesce(
+    jsonb_object_agg(a.account_number, coalesce(nullif(up.full_name, ''), up.email)),
+    '{}'::jsonb
+  )
+  into result
+  from public.accounts a
+  join public.user_profiles up on up.id = a.user_id
+  where a.account_number = any(account_numbers);
+  return result;
+end;
+$$;
+
+-- Resolve account ids to the owning user's display name (full_name fallback email).
+create or replace function public.resolve_account_id_usernames(account_ids bigint[])
+returns jsonb
+language plpgsql
+security definer
+as $$
+declare
+  result jsonb;
+begin
+  select coalesce(
+    jsonb_object_agg(a.id::text, coalesce(nullif(up.full_name, ''), up.email)),
+    '{}'::jsonb
+  )
+  into result
+  from public.accounts a
+  join public.user_profiles up on up.id = a.user_id
+  where a.id = any(account_ids);
+  return result;
+end;
+$$;
+
+-- 6. UPDATE AUTO-CREATE TRIGGER to also create default checking account
 create or replace function public.handle_new_user()
 returns trigger as $$
 begin

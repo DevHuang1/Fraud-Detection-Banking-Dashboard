@@ -130,6 +130,9 @@ public class DashboardController {
     public ResponseEntity<?> getRules(@RequestHeader("Authorization") String authHeader) {
         try {
             String token = authHeader.replace("Bearer ", "");
+            if (!authService.hasRole(token, "investigator", "admin")) {
+                return ResponseEntity.status(403).body(Map.of("error", "Forbidden: investigator or admin role required"));
+            }
             var rules = dataService.getFraudRules(token);
             return ResponseEntity.ok(rules);
         } catch (Exception e) {

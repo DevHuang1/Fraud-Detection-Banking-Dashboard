@@ -3,7 +3,7 @@ import type { SVGProps } from "react";
 type IconProps = SVGProps<SVGSVGElement> & { size?: number };
 
 function createIcon(path: string, viewBox = "0 0 24 24") {
-  return ({ size = 20, className, ...props }: IconProps) => (
+  const IconComponent = ({ size = 20, className, ...props }: IconProps) => (
     <svg width={size} height={size} viewBox={viewBox} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} {...props}>
       {path.split("|").map((p, i) => {
         const [tag, ...attrs] = p.split(" ");
@@ -25,6 +25,8 @@ function createIcon(path: string, viewBox = "0 0 24 24") {
       })}
     </svg>
   );
+  IconComponent.displayName = "Icon";
+  return IconComponent;
 }
 
 export const Icons = {
