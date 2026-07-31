@@ -12,7 +12,7 @@
   <img src="https://img.shields.io/badge/PostgreSQL-4169E1?style=for-the-badge&logo=postgresql&logoColor=white" />
 </p>
 
-Enterprise-grade fraud detection dashboard with 26K+ synthetic transactions, real-time monitoring, and ML-powered fraud analysis (Keras + DistilBERT ensemble).
+Enterprise-grade fraud detection dashboard with 26K+ synthetic transactions, real-time monitoring, and ML-powered fraud analysis (Keras + DistilBERT ensemble). Ships role-based workspaces (customer / analyst / investigator / admin), server-side auth routing, and hardened Supabase session handling.
 
 ## Architecture
 
@@ -41,7 +41,7 @@ The frontend fetches data through a same-origin Next.js API route (`/api/proxy`)
 |-------|-----------|
 | Frontend | Next.js 16.2, React 19, Tailwind CSS v4, TypeScript, recharts, framer-motion, lucide-react |
 | Database | Supabase (PostgreSQL) with Row-Level Security |
-| Auth | Supabase Auth with SSR (`@supabase/ssr`) |
+| Auth | Supabase Auth with SSR (`@supabase/ssr`) + middleware-based route protection |
 | ML | Keras model + DistilBERT transformer ensemble via FastAPI sidecar |
 
 ## Getting Started
@@ -79,7 +79,18 @@ python3 seed_fast.py
 
 This creates 100 users, ~200 accounts, and 25K+ transactions with synthetic fraud patterns.
 
-### 4. Run — 2 Terminals
+### 4. Provision Demo Auth Users
+
+Each role needs a sign-in-able Supabase Auth account so the middleware can route users to their workspace:
+
+```bash
+cd frontend
+npm run seed:auth          # uses SUPABASE_SERVICE_KEY from .env.local
+```
+
+The script prints the credentials it created (one account per role: `user`, `analyst`, `investigator`, `admin`) and keeps `user_profiles` + JWT metadata in sync.
+
+### 5. Run — 2 Terminals
 
 ```bash
 # Terminal 1 — Python ML service
@@ -119,16 +130,30 @@ Open [localhost:3000](http://localhost:3000).
 - ML fraud probability gauge (animated ring)
 - Rule triggers with severity indicators
 - Customer/device metadata (IP, device ID, coordinates, region)
-- Action buttons (block, flag, more)
+- Related-account / device / IP analysis
+- Action buttons (block, flag) and fraud-case creation (investigator/admin)
+
+### Transaction History (customer)
+- Personal transaction feed with counterparty names resolved via the `resolve_account_id_usernames` RPC
+
+### Reports (analyst/investigator/admin)
+- Filterable data-driven export — generate PDF/CSV of cases, alerts, and transactions with one click
+
+### Team Management (admin)
+- Invite and provision users with a role, promote/demote existing members, and search/filter by role
 
 ### Role-Based Access
-| Role | Access |
-|------|--------|
-| Analyst | View dashboards, transactions, cases, analytics |
-| Investigator | All analyst + update cases, manage rules |
-| Admin | Full access + manage rules, team, delete data |
+| Role | Workspace | Access |
+|------|-----------|--------|
+| user | `/` | Own account, transaction history, transfer view |
+| analyst | `/analyst` | Dashboards, transactions, analytics, cases, reports |
+| investigator | `/investigator` | All analyst + update cases, create fraud cases, manage rules |
+| admin | `/admin` | Full access + manage rules, team management, exports |
 
-RBAC is enforced via Supabase RLS policies and frontend `RoleGate` components.
+RBAC is enforced end-to-end:
+- **Next.js middleware** (`src/middleware.ts`) validates the session server-side with `getUser()` and routes each role to its home; unauthenticated users are sent to `/login?next=…`.
+- **Supabase RLS policies** restrict writes (e.g., fraud-case and rule updates) to investigator/admin.
+- **Frontend `RoleGate` components** gate actions and views per role.
 
 ### Realtime
 - WebSocket subscriptions via Supabase Realtime
@@ -140,27 +165,36 @@ RBAC is enforced via Supabase RLS policies and frontend `RoleGate` components.
 ├── frontend/                    # Next.js application
 │   ├── src/
 │   │   ├── app/
-│   │   │   ├── api/proxy/      # Same-origin proxy to ML service
-│   │   │   ├── page.tsx         # Main dashboard
+│   │   │   ├── api/proxy/      # Same-origin proxy to ML service (GET + PATCH)
+│   │   │   ├── page.tsx         # Customer dashboard (role: user)
+│   │   │   ├── analyst/         # Analyst workspace
+│   │   │   ├── investigator/    # Investigator workspace
+│   │   │   ├── admin/           # Admin workspace
 │   │   │   ├── login/           # Login page
 │   │   │   └── signup/          # Signup page
 │   │   ├── components/
 │   │   │   ├── auth/            # RoleGate, ProtectedRoute
+│   │   │   ├── workspace/       # Workspace shell + nav for staff roles
 │   │   │   ├── ui/              # Sidebar, Header, Icons
-│   │   │   ├── dashboard/       # KpiCards, FraudHealthCards
+│   │   │   ├── dashboard/       # KpiCards, FraudHealthCards, TransactionHistory
 │   │   │   ├── transactions/    # TransactionTable, TransactionDrawer
-│   │   │   ├── analytics/       # AnalyticsWidgets (5 recharts charts)
-│   │   │   └── cases/           # CaseManagement
-│   │   ├── context/             # AuthContext (Supabase SSR)
-│   │   ├── lib/                 # Supabase service + type exports
+│   │   │   ├── analytics/       # AnalyticsWidgets (recharts charts)
+│   │   │   ├── cases/           # CaseManagement
+│   │   │   ├── reports/         # ReportsView (PDF/CSV export)
+│   │   │   └── team/            # TeamManagement (admin)
+│   │   ├── context/             # AuthContext (Supabase SSR, getUser-based)
+│   │   ├── lib/                 # Supabase service, roles, analyzeTransaction
+│   │   ├── middleware.ts         # Server-side auth + role routing
 │   │   └── utils/supabase/      # Server + browser client factories
 │   └── .env.local
 ├── backend/
 │   └── src/main/resources/
 │       └── supabase-schema.sql  # Full DB schema with RLS
 ├── python-ml-service/
-│   ├── app.py                   # FastAPI: /predict, /api/stats, /api/transactions
+│   ├── app.py                   # FastAPI: /predict, /api/stats, /api/transactions, PATCH status
 │   ├── seed_fast.py             # Seed script: 100 users, 25K+ transactions
+│   ├── backfill_user_data.py    # Idempotent user/account backfill
+│   ├── backfill_rule_triggers.py# Idempotent rule-trigger backfill
 │   ├── model.h5                 # Keras trained model (PaySim)
 │   ├── preprocessor/            # Scaler + LabelEncoder
 │   └── requirements.txt
@@ -174,13 +208,15 @@ RBAC is enforced via Supabase RLS policies and frontend `RoleGate` components.
 |--------|------|-------------|
 | GET | `/api/proxy?path=stats` | Aggregated dashboard stats (accurate count) |
 | GET | `/api/proxy?path=transactions&limit=N` | Transaction list with pagination |
+| PATCH | `/api/proxy?path=/api/transactions/{id}` | Update transaction status (investigator/admin) |
 
 ### ML Sidecar (`localhost:5001`)
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/health` | Service health check |
-| GET | `/api/stats` | Aggregated stats (via service_role key) |
+| GET | `/api/stats` | Aggregated stats (Postgres-side counts via service_role key) |
 | GET | `/api/transactions` | Transaction list (no row limit) |
+| PATCH | `/api/transactions/{id}` | Update transaction status |
 | POST | `/predict` | Keras fraud prediction (8 features) |
 | POST | `/predict-transformer` | DistilBERT text-based fraud prediction |
 | POST | `/predict-ensemble` | 60/40 weighted Keras + DistilBERT blend |
@@ -193,3 +229,5 @@ Run `seed_fast.py` to populate the database with realistic synthetic data:
 - **~200 accounts** (checking, savings, credit card) with balances
 - **25,000+ transactions** with ~5% fraud rate, ML probabilities, risk scores
 - **300 alerts** and **100+ fraud cases** assigned to investigators
+
+After seeding, run `npm run seed:auth` in `frontend/` to create one sign-in-able Supabase Auth account per role with matching `user_profiles` rows and role metadata.
