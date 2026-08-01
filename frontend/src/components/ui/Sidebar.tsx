@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Icons } from "./Icons";
 import { useAuth, type UserRole } from "@/context/AuthContext";
 import { supabase } from "@/lib/supabase";
-import { ROLE_COLOR, ROLE_LABEL } from "@/lib/roles";
+import { ROLE_COLOR, displayRoleLabel } from "@/lib/roles";
 export interface NavItem {
   label: string;
   icon: string;
@@ -23,17 +23,49 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ active, onNavigate, collapsed, onToggleCollapsed, sections }: SidebarProps) {
-  const { user, hasRole, logout } = useAuth();
+  const { user, hasRole, logout, updateName } = useAuth();
   const router = useRouter();
-  const [caseCount, setCaseCount] = useState("12");
+  const [caseCount, setCaseCount] = useState("0");
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState("");
+
+  const displayName = user?.full_name?.trim() || user?.email?.split("@")[0] || "User";
+  const avatarInitials = displayName
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((p) => p[0])
+    .join("")
+    .toUpperCase() || "U";
+
+  const saveName = async () => {
+    const name = nameDraft.trim();
+    if (!name) return;
+    const res = await updateName(name);
+    if (res.error) return;
+    setEditingName(false);
+    setNameDraft("");
+  };
 
   useEffect(() => {
     let active = true;
-    supabase.getCases().then((cases) => {
-      if (active) setCaseCount(String(cases.length));
-    });
+    const load = () => {
+      supabase.getCases().then((cases) => {
+        if (active) {
+          const activeCount = cases.filter((c) => c.status === "open" || c.status === "investigating").length;
+          setCaseCount(String(activeCount));
+        }
+      });
+    };
+    load();
+    const client = supabase.getClient();
+    const channel = client
+      .channel("fraud_cases_badge")
+      .on("postgres_changes", { event: "*", schema: "public", table: "fraud_cases" }, load)
+      .subscribe();
     return () => {
       active = false;
+      client.removeChannel(channel);
     };
   }, []);
 
@@ -68,6 +100,7 @@ export default function Sidebar({ active, onNavigate, collapsed, onToggleCollaps
       nodes: <Icons.nodes />,
       fileText: <Icons.fileText />,
       users: <Icons.users />,
+      bot: <Icons.bot />,
     };
     return iconMap[name] || null;
   };
@@ -100,6 +133,7 @@ export default function Sidebar({ active, onNavigate, collapsed, onToggleCollaps
           return (
             <button
               key={s.key}
+              data-nav-key={s.key}
               onClick={() => onNavigate(s.key)}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 relative group ${
                 isActive
@@ -129,17 +163,26 @@ export default function Sidebar({ active, onNavigate, collapsed, onToggleCollaps
       <div className="px-2.5 py-3 border-t border-[#1e293b]">
         <div className="flex items-center gap-3 px-3 py-2.5">
           <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center text-xs font-bold text-white shrink-0 shadow-lg">
-            YK
+            {avatarInitials}
           </div>
           {!collapsed && (
             <div className="overflow-hidden">
-              <span className="block text-sm font-medium text-white truncate">{user?.email?.split("@")[0] || "User"}</span>
+              <div className="flex items-center gap-1.5">
+                <span className="block text-sm font-medium text-white truncate">{displayName}</span>
+                <button
+                  onClick={() => setEditingName(true)}
+                  className="text-[#475569] hover:text-[#00f0ff] transition-colors shrink-0"
+                  title="Change username"
+                >
+                  <Icons.edit size={12} />
+                </button>
+              </div>
               {user?.role ? (() => {
                 const colors = ROLE_COLOR[user.role] || ROLE_COLOR.user;
                 return (
                   <span className="flex items-center gap-1.5 text-xs" style={{ color: colors.text }}>
                     <span className="w-1.5 h-1.5 rounded-full" style={{ background: colors.dot }} />
-                    {ROLE_LABEL[user.role] || user.role.charAt(0).toUpperCase() + user.role.slice(1)}
+                    {displayRoleLabel(user.is_ceo, user.role)}
                   </span>
                 );
               })() : (
@@ -148,6 +191,32 @@ export default function Sidebar({ active, onNavigate, collapsed, onToggleCollaps
             </div>
           )}
         </div>
+
+        {editingName && (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void saveName();
+            }}
+            className="px-3 pt-0.5 pb-1 flex items-center gap-2"
+          >
+            <input
+              autoFocus
+              value={nameDraft}
+              onChange={(e) => setNameDraft(e.target.value)}
+              maxLength={40}
+              placeholder="New username"
+              className="flex-1 min-w-0 h-8 px-2.5 rounded-lg text-xs bg-[#1e293b] border border-[#334155] text-white placeholder-[#4a5568] outline-none focus:border-[#00f0ff]/30"
+            />
+            <button type="submit" className="p-1.5 rounded-lg text-[#22c55e] hover:bg-[#22c55e]/10 transition-all" title="Save">
+              <Icons.check size={14} />
+            </button>
+            <button type="button" onClick={() => setEditingName(false)} className="p-1.5 rounded-lg text-[#64748b] hover:text-white hover:bg-white/[0.05] transition-all" title="Cancel">
+              <Icons.x size={14} />
+            </button>
+          </form>
+        )}
+
         <div className="flex items-center gap-1 mt-1">
           <button
             onClick={() => { logout(); router.push("/login"); }}

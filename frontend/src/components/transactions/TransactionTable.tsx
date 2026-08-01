@@ -57,6 +57,7 @@ export default function TransactionTable({ transactions, onSelect }: Props) {
               placeholder="Search..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
+              data-field="tx_search"
               className="w-44 h-9 pl-9 pr-3 rounded-lg text-xs bg-[#1e293b] border border-[#334155] text-white placeholder-[#4a5568] outline-none focus:border-[#00f0ff]/30"
             />
           </div>
@@ -105,6 +106,7 @@ export default function TransactionTable({ transactions, onSelect }: Props) {
               return (
                 <tr
                   key={tx.id}
+                  data-tx-id={tx.transaction_id}
                   onClick={() => onSelect(tx)}
                   className="border-b border-[#1e293b]/50 hover:bg-white/[0.02] transition-colors cursor-pointer group relative"
                 >

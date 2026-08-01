@@ -3,32 +3,27 @@
 import { useState, useEffect } from "react";
 import { supabase, type Account, type Transaction, type Transfer } from "@/lib/supabase";
 import { useAuth } from "@/context/AuthContext";
-
-const riskColors: Record<string, { bg: string; text: string; dot: string }> = {
-  critical: { bg: "rgba(239,68,68,0.15)", text: "#ef4444", dot: "#ef4444" },
-  high: { bg: "rgba(245,158,11,0.15)", text: "#f59e0b", dot: "#f59e0b" },
-  medium: { bg: "rgba(59,130,246,0.15)", text: "#3b82f6", dot: "#3b82f6" },
-  low: { bg: "rgba(34,197,94,0.15)", text: "#22c55e", dot: "#22c55e" },
-};
+import { Icons } from "@/components/ui/Icons";
 
 const statusColors: Record<string, string> = {
-  approved: "bg-[#22c55e]/10 text-[#22c55e]",
   completed: "bg-[#22c55e]/10 text-[#22c55e]",
-  flagged: "bg-[#f59e0b]/10 text-[#f59e0b]",
-  pending: "bg-[#3b82f6]/10 text-[#3b82f6]",
-  blocked: "bg-[#ef4444]/10 text-[#ef4444]",
-  failed: "bg-[#ef4444]/10 text-[#ef4444]",
+  declined: "bg-[#ef4444]/10 text-[#ef4444]",
 };
+
+function visibleStatus(status: string): "completed" | "declined" {
+  if (status === "approved" || status === "completed") return "completed";
+  return "declined";
+}
 
 interface HistoryRow {
   id: string;
   who: string;
   detail: string;
+  transactionId: string;
   when: string;
   amount: number;
   direction: "in" | "out" | "card";
-  status: string;
-  risk_level?: string;
+  status: "completed" | "declined";
 }
 
 export default function TransactionHistory() {
@@ -36,6 +31,17 @@ export default function TransactionHistory() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [rows, setRows] = useState<HistoryRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  const copyId = async (id: string) => {
+    try {
+      await navigator.clipboard.writeText(id);
+      setCopiedId(id);
+      setTimeout(() => setCopiedId(null), 1500);
+    } catch {
+      setCopiedId(null);
+    }
+  };
 
   useEffect(() => {
     if (!user?.id) return;
@@ -64,13 +70,13 @@ export default function TransactionHistory() {
       const merged: HistoryRow[] = [
         ...txns.map((t: Transaction) => ({
           id: `tx-${t.id}`,
-          who: txUsernames[t.account_id] || myUsername || t.account_name || "Unknown",
-          detail: t.merchant || t.transaction_type,
+          who: t.merchant || txUsernames[t.account_id] || myUsername || "Unknown",
+          detail: t.merchant_category || t.transaction_type,
+          transactionId: t.transaction_id,
           when: t.timestamp,
           amount: Number(t.amount),
           direction: "card" as const,
-          status: t.status,
-          risk_level: t.risk_level,
+          status: visibleStatus(t.status),
         })),
         ...transfers.map((t: Transfer) => {
           const isReceived = myAccountIds.has(t.receiver_account_id) && !myAccountIds.has(t.sender_account_id);
@@ -80,10 +86,11 @@ export default function TransactionHistory() {
             id: `tr-${t.id}`,
             who,
             detail: isReceived ? "Received transfer" : "Sent transfer",
+            transactionId: `TRF-${t.id}`,
             when: t.created_at,
             amount: Number(t.amount),
             direction: isReceived ? "in" as const : "out" as const,
-            status: t.status,
+            status: visibleStatus(t.status),
           };
         }),
       ].sort((a, b) => new Date(b.when).getTime() - new Date(a.when).getTime());
@@ -114,62 +121,67 @@ export default function TransactionHistory() {
           <table className="w-full text-sm">
             <thead>
               <tr className="text-[#64748b] text-xs uppercase tracking-wider border-b border-[#1e293b]">
-                <th className="text-left font-medium pb-3 pr-4">Username</th>
+                <th className="text-left font-medium pb-3 pr-4">To / From</th>
                 <th className="text-left font-medium pb-3 pr-4">Detail</th>
+                <th className="text-left font-medium pb-3 pr-4">Transaction ID</th>
                 <th className="text-left font-medium pb-3 pr-4">When</th>
                 <th className="text-left font-medium pb-3 pr-4">Amount</th>
-                <th className="text-left font-medium pb-3 pr-4">Risk</th>
                 <th className="text-right font-medium pb-3">Status</th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => {
-                const rc = row.risk_level ? riskColors[row.risk_level] || riskColors.low : riskColors.low;
-                return (
-                  <tr key={row.id} className="border-b border-[#1e293b]/50 hover:bg-white/[0.02] transition-colors">
-                    <td className="py-3.5 pr-4">
-                      <div className="flex items-center gap-2">
-                        {row.direction !== "card" && (
-                          <span
-                            className="inline-flex items-center justify-center w-6 h-6 rounded-lg text-[10px] font-bold"
-                            style={row.direction === "in"
-                              ? { background: "rgba(34,197,94,0.15)", color: "#22c55e" }
-                              : { background: "rgba(245,158,11,0.15)", color: "#f59e0b" }}
-                          >
-                            {row.direction === "in" ? "IN" : "OUT"}
-                          </span>
-                        )}
-                        <span className="text-white text-xs font-medium">{row.who}</span>
-                      </div>
-                    </td>
-                    <td className="py-3.5 pr-4">
-                      <span className="text-[#94a3b8] text-xs">{row.detail}</span>
-                    </td>
-                    <td className="py-3.5 pr-4">
-                      <span className="text-[#94a3b8] text-xs">{new Date(row.when).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</span>
-                    </td>
-                    <td className="py-3.5 pr-4">
-                      <span className={`font-semibold tabular-nums ${row.direction === "in" ? "text-[#22c55e]" : row.direction === "out" ? "text-[#f59e0b]" : "text-white"}`}>
-                        {row.direction === "in" ? "+" : row.direction === "out" ? "-" : ""}
-                        ${row.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </span>
-                    </td>
-                    <td className="py-3.5 pr-4">
-                      {row.risk_level ? (
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium" style={{ background: rc.bg, color: rc.text }}>
-                          <span className="w-1.5 h-1.5 rounded-full" style={{ background: rc.dot }} />
-                          {row.risk_level.charAt(0).toUpperCase() + row.risk_level.slice(1)}
+              {rows.map((row) => (
+                <tr key={row.id} className="border-b border-[#1e293b]/50 hover:bg-white/[0.02] transition-colors">
+                  <td className="py-3.5 pr-4">
+                    <div className="flex items-center gap-2">
+                      {row.direction !== "card" && (
+                        <span
+                          className="inline-flex items-center justify-center w-6 h-6 rounded-lg text-[10px] font-bold"
+                          style={row.direction === "in"
+                            ? { background: "rgba(34,197,94,0.15)", color: "#22c55e" }
+                            : { background: "rgba(245,158,11,0.15)", color: "#f59e0b" }}
+                        >
+                          {row.direction === "in" ? "IN" : "OUT"}
                         </span>
-                      ) : (
-                        <span className="text-[#64748b] text-xs">—</span>
                       )}
-                    </td>
-                    <td className="py-3.5 text-right">
-                      <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium capitalize ${statusColors[row.status] || ""}`}>{row.status}</span>
-                    </td>
-                  </tr>
-                );
-              })}
+                      <span className="text-white text-xs font-medium">{row.who}</span>
+                    </div>
+                  </td>
+                  <td className="py-3.5 pr-4">
+                    <span className="text-[#94a3b8] text-xs">{row.detail}</span>
+                  </td>
+                  <td className="py-3.5 pr-4">
+                    <button
+                      type="button"
+                      onClick={() => copyId(row.transactionId)}
+                      className="inline-flex items-center gap-1.5 text-[#64748b] text-xs font-mono hover:text-[#00f0ff] transition-colors"
+                      title="Copy transaction ID"
+                    >
+                      {row.transactionId}
+                      {copiedId === row.transactionId ? (
+                        <Icons.check size={12} className="text-[#22c55e]" />
+                      ) : (
+                        <Icons.copy size={12} />
+                      )}
+                    </button>
+                    {copiedId === row.transactionId && (
+                      <span className="ml-2 text-[#22c55e] text-xs">Copied</span>
+                    )}
+                  </td>
+                  <td className="py-3.5 pr-4">
+                    <span className="text-[#94a3b8] text-xs">{new Date(row.when).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</span>
+                  </td>
+                  <td className="py-3.5 pr-4">
+                    <span className={`font-semibold tabular-nums ${row.direction === "in" ? "text-[#22c55e]" : row.direction === "out" ? "text-[#f59e0b]" : "text-white"}`}>
+                      {row.direction === "in" ? "+" : row.direction === "out" ? "-" : ""}
+                      ${row.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </td>
+                  <td className="py-3.5 text-right">
+                    <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium capitalize ${statusColors[row.status] || ""}`}>{row.status}</span>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>

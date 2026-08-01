@@ -10,10 +10,14 @@ create table if not exists public.user_profiles (
   email text,
   full_name text,
   role text check (role in ('user', 'analyst', 'investigator', 'admin')) default 'user',
+  is_ceo boolean default false,
   avatar_url text,
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
+
+-- Add is_ceo to existing tables (safe to re-run)
+alter table public.user_profiles add column if not exists is_ceo boolean default false;
 
 alter table public.user_profiles enable row level security;
 
@@ -38,6 +42,99 @@ do $$ begin
     );
 exception when duplicate_object then null;
 end $$;
+
+-- Users can update their own profile; admins can update any profile.
+-- Fine-grained CEO protection is enforced by the BEFORE UPDATE trigger below.
+do $$ begin
+  create policy "Users can update own profile" on public.user_profiles
+    for update using (auth.uid() = id)
+    with check (auth.uid() = id);
+exception when duplicate_object then null;
+end $$;
+
+do $$ begin
+  create policy "Admins can update all profiles" on public.user_profiles
+    for update using (
+      exists (select 1 from public.user_profiles where id = auth.uid() and role = 'admin')
+    );
+exception when duplicate_object then null;
+end $$;
+
+-- ------------------------------------------------------------
+-- CEO protection: only the CEO (is_ceo = true) may change roles,
+-- promote/demote the CEO flag, or touch other admin accounts.
+-- Regular admins may still manage non-admin users (users, analysts,
+-- investigators). Runs security definer so it applies even through
+-- RLS-gated updates.
+-- ------------------------------------------------------------
+create or replace function public.protect_profile_updates()
+returns trigger as $$
+declare
+  actor_is_admin boolean;
+  actor_is_ceo boolean;
+begin
+  -- Service-role / SQL-editor (postgres) sessions bypass RLS and are trusted.
+  if session_user = 'postgres' or coalesce(auth.jwt() ->> 'role', '') = 'service_role' then
+    return new;
+  end if;
+
+  select role = 'admin', is_ceo into actor_is_admin, actor_is_ceo
+  from public.user_profiles
+  where id = auth.uid();
+
+  -- Not signed in or no profile: fall back to blocking privileged changes.
+  actor_is_admin := coalesce(actor_is_admin, false);
+  actor_is_ceo := coalesce(actor_is_ceo, false);
+
+  -- Only staff (admins) or the user themself may update a profile.
+  if not (actor_is_admin or auth.uid() = old.id) then
+    raise exception 'Not authorized to update this profile';
+  end if;
+
+  -- Regular users may only update their own non-role fields.
+  if auth.uid() = old.id and not actor_is_admin then
+    if new.role is distinct from old.role
+       or new.is_ceo is distinct from old.is_ceo then
+      raise exception 'You cannot change your own role';
+    end if;
+  end if;
+
+  -- The CEO flag is reserved for the CEO.
+  if new.is_ceo is distinct from old.is_ceo and not actor_is_ceo then
+    raise exception 'Only the CEO can grant or revoke CEO status';
+  end if;
+
+  -- Only one CEO exists at a time.
+  if new.is_ceo and not old.is_ceo then
+    if exists (select 1 from public.user_profiles where is_ceo and id <> old.id) then
+      raise exception 'A CEO already exists — demote them before granting CEO status';
+    end if;
+  end if;
+
+  -- Admins may change non-admin roles freely.
+  if actor_is_admin and not actor_is_ceo then
+    -- Cannot change the role of another admin or the CEO, nor demote the CEO.
+    if old.role = 'admin' or old.is_ceo then
+      raise exception 'Only the CEO can manage admin accounts';
+    end if;
+    -- Cannot change someone into an admin.
+    if new.role = 'admin' then
+      raise exception 'Only the CEO can create admins';
+    end if;
+  end if;
+
+  new.updated_at := now();
+  return new;
+end;
+$$ language plpgsql security definer;
+
+drop trigger if exists user_profiles_ceo_guard on public.user_profiles;
+create trigger user_profiles_ceo_guard
+  before update on public.user_profiles
+  for each row execute function public.protect_profile_updates();
+
+-- Mark the seeded CEO as CEO (matches the account created by the seed script)
+update public.user_profiles set is_ceo = true where email = 'admin@fraudbank.demo';
 
 -- Auto-create profile on signup (uses role from user_metadata if provided)
 create or replace function public.handle_new_user()
@@ -105,9 +202,13 @@ exception when duplicate_object then null;
 end $$;
 
 do $$ begin
-  create policy "Investigators and admins can update transactions" on public.transactions
+  drop policy if exists "Investigators and admins can update transactions" on public.transactions;
+end $$;
+
+do $$ begin
+  create policy "Staff can update transactions" on public.transactions
     for update using (
-      exists (select 1 from public.user_profiles where id = auth.uid() and role in ('investigator','admin'))
+      exists (select 1 from public.user_profiles where id = auth.uid() and role in ('analyst','investigator','admin'))
     );
 exception when duplicate_object then null;
 end $$;
@@ -160,17 +261,25 @@ exception when duplicate_object then null;
 end $$;
 
 do $$ begin
-  create policy "Investigators and admins can update cases" on public.fraud_cases
+  drop policy if exists "Investigators and admins can update cases" on public.fraud_cases;
+end $$;
+
+do $$ begin
+  create policy "Staff can update cases" on public.fraud_cases
     for update using (
-      exists (select 1 from public.user_profiles where id = auth.uid() and role in ('investigator','admin'))
+      exists (select 1 from public.user_profiles where id = auth.uid() and role in ('analyst','investigator','admin'))
     );
 exception when duplicate_object then null;
 end $$;
 
 do $$ begin
-  create policy "Investigators and admins can create cases" on public.fraud_cases
+  drop policy if exists "Investigators and admins can create cases" on public.fraud_cases;
+end $$;
+
+do $$ begin
+  create policy "Staff can create cases" on public.fraud_cases
     for insert with check (
-      exists (select 1 from public.user_profiles where id = auth.uid() and role in ('investigator','admin'))
+      exists (select 1 from public.user_profiles where id = auth.uid() and role in ('analyst','investigator','admin'))
     );
 exception when duplicate_object then null;
 end $$;
@@ -283,15 +392,16 @@ exception when duplicate_object then null;
 end $$;
 
 -- 7. SEED DATA: Default fraud rules
-insert into public.fraud_rules (name, description, rule_type, action, severity) values
-  ('High-Value Threshold',  'Transactions exceeding $10,000', 'amount', 'flag', 'high'),
-  ('Velocity Spike',        'More than 5 transactions in 10 minutes', 'velocity', 'block', 'critical'),
-  ('Geo Anomaly',           'Transaction from unusual geographic location', 'geo', 'flag', 'high'),
-  ('Device Mismatch',       'Transaction from unrecognized device', 'device', 'review', 'medium'),
-  ('Night Trading',         'High-value transaction during off-hours (12AM-5AM)', 'behavioral', 'flag', 'medium'),
-  ('Rapid Cash-Out',        'Multiple ATM withdrawals in short period', 'velocity', 'block', 'critical'),
-  ('New Account Risk',      'Account less than 30 days old with large transaction', 'behavioral', 'flag', 'high'),
-  ('International Alert',  'Cross-border transaction to high-risk region', 'geo', 'notify', 'medium')
+-- conditions drive the live rule engine in python-ml-service/simulate_live.py
+insert into public.fraud_rules (name, description, rule_type, action, severity, conditions) values
+  ('High-Value Threshold',  'Transactions exceeding $10,000', 'amount', 'flag', 'high', '{"field":"amount","op":"gt","value":10000}'::jsonb),
+  ('Velocity Spike',        'More than 5 transactions in 10 minutes', 'velocity', 'block', 'critical', '{"window_min":10,"max_count":5}'::jsonb),
+  ('Geo Anomaly',           'Transaction from unusual geographic location', 'geo', 'flag', 'high', '{"countries":["NG","BR","IN","ZA"]}'::jsonb),
+  ('Device Mismatch',       'Transaction from unrecognized device', 'device', 'review', 'medium', '{"unknown_device":true}'::jsonb),
+  ('Night Trading',         'High-value transaction during off-hours (12AM-5AM)', 'behavioral', 'flag', 'medium', '{"hour_start":0,"hour_end":5,"value":5000}'::jsonb),
+  ('Rapid Cash-Out',        'Multiple ATM withdrawals in short period', 'velocity', 'block', 'critical', '{"window_min":15,"max_count":3,"transaction_type":"withdrawal"}'::jsonb),
+  ('New Account Risk',      'Account less than 30 days old with large transaction', 'behavioral', 'flag', 'high', '{"max_age_days":30,"value":5000}'::jsonb),
+  ('International Alert',   'Cross-border transaction to high-risk region', 'geo', 'notify', 'medium', '{"countries":["NG","BR","IN","ZA"],"transaction_types":["transfer","withdrawal"]}'::jsonb)
 on conflict do nothing;
 
 -- 8. BANKING ACCOUNTS

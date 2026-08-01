@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import type { Transaction } from "@/lib/supabase";
 import { supabase } from "@/lib/supabase";
 import { Icons } from "@/components/ui/Icons";
+import { useAuth } from "@/context/AuthContext";
 import {
   computeAnalysis,
   type Signal,
@@ -16,6 +17,7 @@ interface Props {
   onClose: () => void;
   onUpdated?: () => void;
   canModerate?: boolean;
+  canTriage?: boolean;
 }
 
 interface RuleTrigger {
@@ -66,6 +68,13 @@ const statusPill: Record<string, string> = {
   blocked: "bg-[#ef4444]/10 text-[#ef4444]",
   pending: "bg-[#3b82f6]/10 text-[#3b82f6]",
 };
+
+function guessFraudType(tx: Transaction): string {
+  if (tx.transaction_type === "transfer") return "wire_fraud";
+  if (tx.transaction_type === "withdrawal") return "rapid_cashout";
+  if (tx.transaction_type === "purchase" || tx.transaction_type === "payment") return "card_not_present";
+  return "account_takeover";
+}
 
 type DrawerAction = "blocked" | "flagged" | "approved" | "confirmed_fraud";
 
@@ -143,7 +152,8 @@ function RelatedRow({ t }: { t: Transaction }) {
   );
 }
 
-export default function TransactionDrawer({ tx, onClose, onUpdated, canModerate = true }: Props) {
+export default function TransactionDrawer({ tx, onClose, onUpdated, canModerate = true, canTriage = false }: Props) {
+  const { user } = useAuth();
   const [current, setCurrent] = useState<Transaction | null>(tx);
   const [prevTx, setPrevTx] = useState<Transaction | null>(tx);
   const [updating, setUpdating] = useState<DrawerAction | null>(null);
@@ -151,6 +161,17 @@ export default function TransactionDrawer({ tx, onClose, onUpdated, canModerate 
   const [moreOpen, setMoreOpen] = useState(false);
   const [related, setRelated] = useState<Transaction[]>([]);
   const [analysisLoading, setAnalysisLoading] = useState(true);
+  const [caseOpen, setCaseOpen] = useState(false);
+  const [caseSaving, setCaseSaving] = useState(false);
+  const [caseNotice, setCaseNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [caseForm, setCaseForm] = useState({ title: "", description: "", severity: "medium", fraud_type: "other", amount_at_risk: "", assigned_to: "" });
+  const [assignees, setAssignees] = useState<{ id: string; full_name: string; email: string; role: string }[]>([]);
+
+  useEffect(() => {
+    supabase.listUsers().then((rows) =>
+      setAssignees(rows.filter((u) => u.role === "investigator" || u.role === "admin")),
+    );
+  }, []);
 
   if (tx !== prevTx) {
     setPrevTx(tx);
@@ -225,6 +246,44 @@ export default function TransactionDrawer({ tx, onClose, onUpdated, canModerate 
     setMoreOpen(false);
   };
 
+  const openCaseFromTx = () => {
+    setCaseForm({
+      title: `Fraud: ${current.merchant}`,
+      description: `$${current.amount.toLocaleString()} at ${current.merchant} (${current.merchant_category}) via ${current.channel}. ${current.risk_level} risk — ML probability ${((current.ml_fraud_probability || 0) * 100).toFixed(0)}%.`,
+      severity: current.risk_level === "low" ? "medium" : current.risk_level,
+      fraud_type: guessFraudType(current),
+      amount_at_risk: String(current.amount),
+      assigned_to: "",
+    });
+    setCaseNotice(null);
+    setMoreOpen(false);
+    setCaseOpen(true);
+  };
+
+  const submitCase = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setCaseSaving(true);
+    setCaseNotice(null);
+    const res = await supabase.createCase({
+      title: caseForm.title.trim(),
+      description: caseForm.description.trim() || undefined,
+      severity: caseForm.severity as "low" | "medium" | "high" | "critical",
+      fraud_type: caseForm.fraud_type,
+      amount_at_risk: caseForm.amount_at_risk ? Number(caseForm.amount_at_risk) : undefined,
+      assigned_to: caseForm.assigned_to || undefined,
+      assigned_by: user?.id || undefined,
+      transaction_id: current.id,
+    });
+    setCaseSaving(false);
+    if (!res.success) {
+      setCaseNotice({ type: "error", text: res.error || "Failed to create case" });
+      return;
+    }
+    setCaseNotice({ type: "success", text: "Case created and linked to transaction" });
+    setCaseOpen(false);
+    onUpdated?.();
+  };
+
   const isBlocked = current.status === "blocked";
   const isFlagged = current.status === "flagged";
 
@@ -240,7 +299,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdated, canModerate 
               <h2 className="text-base font-semibold text-white">Transaction Detail</h2>
               <span className="font-mono text-sm text-[#94a3b8]">{current.transaction_id}</span>
             </div>
-            <button onClick={onClose} className="w-10 h-10 rounded-lg flex items-center justify-center text-[#64748b] hover:text-white hover:bg-[#1e293b] transition-all">
+            <button onClick={onClose} data-action="close-drawer" className="w-10 h-10 rounded-lg flex items-center justify-center text-[#64748b] hover:text-white hover:bg-[#1e293b] transition-all">
               <Icons.x size={18} />
             </button>
           </div>
@@ -426,15 +485,12 @@ export default function TransactionDrawer({ tx, onClose, onUpdated, canModerate 
           </div>
 
           <div className="px-10 py-5 border-t border-[#1e293b] flex gap-3 relative">
-            {!canModerate ? (
-              <div className="flex-1 h-12 rounded-xl bg-[#1e293b]/50 border border-[#334155] flex items-center justify-center gap-2 text-xs text-[#64748b]">
-                <Icons.shield size={14} /> Read-only view — investigators can moderate transactions
-              </div>
-            ) : (
+            {canModerate ? (
               <>
             <button
               onClick={() => runAction("blocked")}
               disabled={!!updating || isBlocked}
+              data-action="blocked"
               className={`flex-1 h-12 rounded-xl text-white text-sm font-semibold shadow-lg transition-all flex items-center justify-center gap-2 ${
                 isBlocked
                   ? "bg-[#1e293b] border border-[#334155] cursor-not-allowed"
@@ -446,23 +502,10 @@ export default function TransactionDrawer({ tx, onClose, onUpdated, canModerate 
               ) : null}
               {isBlocked ? "Blocked" : "Block Transaction"}
             </button>
-            <button
-              onClick={() => runAction("flagged")}
-              disabled={!!updating || isFlagged}
-              className={`flex-1 h-12 rounded-xl text-white text-sm font-semibold transition-all flex items-center justify-center gap-2 ${
-                isFlagged
-                  ? "bg-[#1e293b] border border-[#334155] cursor-not-allowed"
-                  : "bg-[#1e293b] border border-[#334155] hover:border-[#00f0ff]/30"
-              }`}
-            >
-              {updating === "flagged" ? (
-                <span className="inline-block w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-              ) : null}
-              {isFlagged ? "Flagged" : "Flag for Review"}
-            </button>
             <div className="relative">
               <button
                 onClick={() => setMoreOpen((o) => !o)}
+                data-action="more"
                 className="w-12 h-12 rounded-xl bg-[#1e293b] border border-[#334155] flex items-center justify-center text-[#64748b] hover:text-white hover:border-[#00f0ff]/30 transition-all"
               >
                 <Icons.moreHorizontal size={18} />
@@ -473,8 +516,9 @@ export default function TransactionDrawer({ tx, onClose, onUpdated, canModerate 
                   <div className="absolute bottom-12 right-0 z-50 w-60 rounded-xl bg-[#111827] border border-[#334155] shadow-2xl overflow-hidden animate-fade-in">
                     <div className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-widest text-[#64748b] border-b border-[#1e293b]">More Actions</div>
                     {[
-                      { icon: <Icons.checkCircle size={16} />, label: "Approve Transaction", onClick: () => runAction("approved") },
-                      { icon: <Icons.alertTriangle size={16} />, label: "Mark as Confirmed Fraud", onClick: () => runAction("confirmed_fraud"), danger: true },
+                      { icon: <Icons.shield size={16} />, label: "Open Fraud Case", onClick: openCaseFromTx, action: "open_case" },
+                      { icon: <Icons.checkCircle size={16} />, label: "Approve Transaction", onClick: () => runAction("approved"), action: "approved" },
+                      { icon: <Icons.alertTriangle size={16} />, label: "Mark as Confirmed Fraud", onClick: () => runAction("confirmed_fraud"), action: "confirmed_fraud", danger: true },
                       { icon: <Icons.fileText size={16} />, label: "Export JSON", onClick: exportJson },
                       { icon: <Icons.refresh size={16} />, label: "Copy Transaction ID", onClick: copyId },
                     ].map((item, i) => (
@@ -482,6 +526,7 @@ export default function TransactionDrawer({ tx, onClose, onUpdated, canModerate 
                         key={i}
                         onClick={item.onClick}
                         disabled={!!updating}
+                        data-action={item.action || undefined}
                         className={`w-full flex items-center gap-3 px-4 py-3 text-sm text-left transition-colors ${
                           item.danger ? "text-[#ef4444] hover:bg-[#ef4444]/10" : "text-[#cbd5e1] hover:bg-white/5"
                         }`}
@@ -495,11 +540,117 @@ export default function TransactionDrawer({ tx, onClose, onUpdated, canModerate 
               )}
             </div>
               </>
+            ) : canTriage ? (
+              <>
+            <button
+              onClick={() => runAction("flagged")}
+              disabled={!!updating || isFlagged}
+              data-action="flagged"
+              className={`flex-1 h-12 rounded-xl text-white text-sm font-semibold transition-all flex items-center justify-center gap-2 ${
+                isFlagged
+                  ? "bg-[#1e293b] border border-[#334155] cursor-not-allowed"
+                  : "bg-[#1e293b] border border-[#334155] hover:border-[#00f0ff]/30"
+              }`}
+            >
+              {updating === "flagged" ? (
+                <span className="inline-block w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              ) : null}
+              {isFlagged ? "Flagged" : "Flag for Review"}
+            </button>
+            <button
+              onClick={openCaseFromTx}
+              className="flex-1 h-12 rounded-xl bg-gradient-to-r from-[#3b82f6] to-[#00f0ff] text-white text-sm font-semibold shadow-lg hover:shadow-blue-500/20 transition-all flex items-center justify-center gap-2"
+            >
+              <Icons.shield size={16} /> Open Case
+            </button>
+              </>
+            ) : (
+              <div className="flex-1 h-12 rounded-xl bg-[#1e293b]/50 border border-[#334155] flex items-center justify-center gap-2 text-xs text-[#64748b]">
+                <Icons.shield size={14} /> Read-only view — analysts can flag and open cases
+              </div>
             )}
           </div>
-        </div>
+          </div>
         </div>
       </div>
+
+      {caseOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 animate-fade-in">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setCaseOpen(false)} />
+          <form onSubmit={submitCase} className="relative w-full max-w-lg rounded-2xl border border-[#334155] p-6 space-y-4 scan-line" style={{ background: "#0a0e1a" }}>
+            <div className="flex items-center justify-between">
+              <div>
+                <h4 className="text-sm font-semibold text-white">Open Fraud Case</h4>
+                <p className="text-xs text-[#64748b] mt-0.5">Linked to {current.transaction_id}</p>
+              </div>
+              <button type="button" onClick={() => setCaseOpen(false)} className="w-9 h-9 rounded-lg flex items-center justify-center text-[#64748b] hover:text-white hover:bg-[#1e293b] transition-all">
+                <Icons.x size={16} />
+              </button>
+            </div>
+
+            {caseNotice && (
+              <div className={`px-4 py-2.5 rounded-xl text-xs font-medium ${caseNotice.type === "success" ? "bg-[#22c55e]/10 text-[#22c55e]" : "bg-[#ef4444]/10 text-[#ef4444]"}`}>
+                {caseNotice.text}
+              </div>
+            )}
+
+            <div>
+              <label className="block text-[10px] uppercase tracking-wider text-[#64748b] mb-1">Title</label>
+              <input required value={caseForm.title} onChange={(e) => setCaseForm({ ...caseForm, title: e.target.value })} data-field="case_title" className="w-full h-10 px-3 rounded-lg text-xs bg-[#1e293b] border border-[#334155] text-white outline-none focus:border-[#00f0ff]/30" />
+            </div>
+
+            <div>
+              <label className="block text-[10px] uppercase tracking-wider text-[#64748b] mb-1">Description</label>
+              <textarea value={caseForm.description} onChange={(e) => setCaseForm({ ...caseForm, description: e.target.value })} rows={2} data-field="case_description" className="w-full px-3 py-2 rounded-lg text-xs bg-[#1e293b] border border-[#334155] text-white outline-none focus:border-[#00f0ff]/30 resize-none" />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[10px] uppercase tracking-wider text-[#64748b] mb-1">Severity</label>
+                <select value={caseForm.severity} onChange={(e) => setCaseForm({ ...caseForm, severity: e.target.value })} data-field="case_severity" className="w-full h-10 px-3 rounded-lg text-xs bg-[#1e293b] border border-[#334155] text-white outline-none focus:border-[#00f0ff]/30">
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                  <option value="critical">Critical</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] uppercase tracking-wider text-[#64748b] mb-1">Fraud Type</label>
+                <select value={caseForm.fraud_type} onChange={(e) => setCaseForm({ ...caseForm, fraud_type: e.target.value })} data-field="case_fraud_type" className="w-full h-10 px-3 rounded-lg text-xs bg-[#1e293b] border border-[#334155] text-white outline-none focus:border-[#00f0ff]/30">
+                  {["account_takeover", "rapid_cashout", "geo_anomaly", "wire_fraud", "card_not_present", "identity_theft", "other"].map((f) => (
+                    <option key={f} value={f}>{f.replace(/_/g, " ")}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[10px] uppercase tracking-wider text-[#64748b] mb-1">Amount at Risk</label>
+                <input type="number" min="0" step="0.01" value={caseForm.amount_at_risk} onChange={(e) => setCaseForm({ ...caseForm, amount_at_risk: e.target.value })} data-field="case_amount" className="w-full h-10 px-3 rounded-lg text-xs bg-[#1e293b] border border-[#334155] text-white outline-none focus:border-[#00f0ff]/30" />
+              </div>
+              <div>
+                <label className="block text-[10px] uppercase tracking-wider text-[#64748b] mb-1">Assign To</label>
+                <select value={caseForm.assigned_to} onChange={(e) => setCaseForm({ ...caseForm, assigned_to: e.target.value })} className="w-full h-10 px-3 rounded-lg text-xs bg-[#1e293b] border border-[#334155] text-white outline-none focus:border-[#00f0ff]/30">
+                  <option value="">Unassigned</option>
+                  {assignees.map((a) => (
+                    <option key={a.id} value={a.id}>{a.full_name || a.email}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="flex gap-2 pt-1">
+              <button type="submit" disabled={caseSaving} data-field="case_submit" className="flex-1 h-10 rounded-xl bg-gradient-to-r from-[#3b82f6] to-[#00f0ff] text-white text-xs font-semibold shadow-lg hover:shadow-blue-500/20 transition-all disabled:opacity-50">
+                {caseSaving ? "Creating..." : "Create Case"}
+              </button>
+              <button type="button" onClick={() => setCaseOpen(false)} className="h-10 px-4 rounded-xl bg-[#1e293b] border border-[#334155] text-[#64748b] text-xs hover:text-white transition-all">
+                Cancel
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </>
   );
 }

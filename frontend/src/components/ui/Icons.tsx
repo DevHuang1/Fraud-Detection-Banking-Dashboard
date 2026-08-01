@@ -70,4 +70,11 @@ export const Icons = {
   nodes: createIcon("circle cx=\"18\" cy=\"5\" r=\"3\"|circle cx=\"6\" cy=\"12\" r=\"3\"|circle cx=\"18\" cy=\"19\" r=\"3\"|line x1=\"8.59\" y1=\"13.51\" x2=\"15.42\" y2=\"17.49\"|line x1=\"15.41\" y1=\"6.51\" x2=\"8.59\" y2=\"10.49\""),
   play: createIcon("polygon 5 3 19 12 5 21 5 3"),
   pause: createIcon("rect x=\"6\" y=\"4\" width=\"4\" height=\"16\"|rect x=\"14\" y=\"4\" width=\"4\" height=\"16\""),
+  eye: createIcon("path M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z|circle cx=\"12\" cy=\"12\" r=\"3\""),
+  bot: createIcon("rect x=\"4\" y=\"7\" width=\"16\" height=\"12\" rx=\"2\"|circle cx=\"9\" cy=\"12\" r=\"1\"|circle cx=\"15\" cy=\"12\" r=\"1\"|path M12 7V4|path M9 4h6|line x1=\"8\" y1=\"16\" x2=\"16\" y2=\"16\""),
+  wand: createIcon("path M15 4V2|path M15 16v-2|path M8 9h2|path M20 9h2|path M17.8 11.8L19 13|path M15 9h.01|path M17.8 6.2L19 5|path M3 21l9-9|path M12.2 6.2L11 5|path M7 1v2|path M7 9v2"),
+  crown: createIcon("path M11.562 3.266a.5.5 0 0 1 .876 0L15.39 8.87a1 1 0 0 0 1.516.294L21.183 5.5a.5.5 0 0 1 .798.519l-2.834 10.246a1 1 0 0 1-.956.735H5.81a1 1 0 0 1-.957-.735L2.02 6.02a.5.5 0 0 1 .798-.519l4.276 3.664a1 1 0 0 0 1.516-.294z"),
+  edit: createIcon("path M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7|path M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"),
+  check: createIcon("polyline 20 6 9 17 4 12"),
+  copy: createIcon("rect x=\"9\" y=\"9\" width=\"13\" height=\"13\" rx=\"2\"|path M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"),
 };

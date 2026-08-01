@@ -15,9 +15,15 @@ import CaseManagement from "@/components/cases/CaseManagement";
 import FraudRules from "@/components/FraudRules";
 import TeamManagement from "@/components/team/TeamManagement";
 import ReportsView from "@/components/reports/ReportsView";
+import AnalystTools from "@/components/tools/AnalystTools";
+import InvestigatorTools from "@/components/tools/InvestigatorTools";
+import AdminTools from "@/components/tools/AdminTools";
+import AiAgent from "@/components/tools/AiAgent";
+import AgentCursor from "@/components/agent/AgentCursor";
+import { AgentProvider } from "@/context/AgentContext";
 import { useAuth, type UserRole } from "@/context/AuthContext";
 import { supabase, type Transaction } from "@/lib/supabase";
-import { ALLOWED_WORKSPACE_ROLES, ROLE_COLOR, ROLE_LABEL, WORKSPACE_NAV } from "@/lib/roles";
+import { ALLOWED_WORKSPACE_ROLES, ROLE_COLOR, WORKSPACE_NAV, displayRoleLabel } from "@/lib/roles";
 
 interface DashboardStats {
   totalTransactions: number;
@@ -148,19 +154,26 @@ export default function Workspace({ role }: { role: UserRole }) {
   const isAdmin = user.role === "admin";
 
   return (
-    <div className="flex min-h-screen cyber-grid" style={{ background: "#0a0e1a" }}>
-      <Sidebar
-        active={activeSection}
-        onNavigate={setActiveSection}
-        collapsed={sidebarCollapsed}
-        onToggleCollapsed={() => setSidebarCollapsed(!sidebarCollapsed)}
-        sections={nav}
-      />
+    <AgentProvider>
+      <div className="flex min-h-screen cyber-grid" style={{ background: "#0a0e1a" }}>
+        <Sidebar
+          active={activeSection}
+          onNavigate={setActiveSection}
+          collapsed={sidebarCollapsed}
+          onToggleCollapsed={() => setSidebarCollapsed(!sidebarCollapsed)}
+          sections={nav}
+        />
 
-      <div className={`flex-1 min-h-screen flex flex-col transition-all duration-300 ${sidebarCollapsed ? "ml-[72px]" : "ml-64"}`}>
-        <Header />
+        <div className={`flex-1 min-h-screen flex flex-col transition-all duration-300 ${sidebarCollapsed ? "ml-[72px]" : "ml-64"}`}>
+          <Header
+            onSelectTransaction={(tx) => {
+              setActiveSection("transactions");
+              setSelectedTx(tx);
+            }}
+            onOpenTab={setActiveSection}
+          />
 
-        <main className="flex-1 p-6 lg:p-8 space-y-6 max-w-[1600px] mx-auto w-full relative z-10">
+          <main className="flex-1 p-6 lg:p-8 space-y-6 max-w-[1600px] mx-auto w-full relative z-10">
           <div className="animate-fade-in">
             <div className="flex items-center justify-between flex-wrap gap-3">
               <div>
@@ -168,7 +181,7 @@ export default function Workspace({ role }: { role: UserRole }) {
                   <h1 className="text-xl font-bold text-white">{meta.title}</h1>
                   <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold font-mono border flex items-center gap-1.5" style={{ color: roleColors.text, background: `${roleColors.dot}12`, borderColor: `${roleColors.dot}25` }}>
                     <span className="w-1.5 h-1.5 rounded-full" style={{ background: roleColors.dot }} />
-                    {ROLE_LABEL[user.role]}
+                    {displayRoleLabel(user.is_ceo, user.role)}
                   </span>
                 </div>
                 <p className="text-sm text-[#64748b] mt-0.5">{meta.subtitle}</p>
@@ -188,13 +201,13 @@ export default function Workspace({ role }: { role: UserRole }) {
           {activeSection === "overview" && (
             <>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
-                <KpiCards stats={stats} />
+                <KpiCards stats={stats} role={user.role} />
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
                 <FraudHealthCards />
               </div>
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-                <AnalyticsWidgets variant="summary" />
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 grid-flow-dense">
+                <AnalyticsWidgets variant="summary" role={user.role} />
               </div>
               <RecentTransactions onSelect={setSelectedTx} />
             </>
@@ -204,11 +217,11 @@ export default function Workspace({ role }: { role: UserRole }) {
             <TransactionTable transactions={transactions} onSelect={setSelectedTx} />
           )}
 
-          {activeSection === "cases" && <CaseManagement readOnly={!isAdmin && user.role === "analyst"} />}
+          {activeSection === "cases" && <CaseManagement canAdjudicate={user.role === "investigator" || user.role === "admin"} />}
 
           {activeSection === "analytics" && (
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-              <AnalyticsWidgets />
+              <AnalyticsWidgets role={user.role} />
             </div>
           )}
 
@@ -219,10 +232,22 @@ export default function Workspace({ role }: { role: UserRole }) {
           {activeSection === "reports" && <ReportsView />}
 
           {activeSection === "team" && isAdmin && <TeamManagement />}
+
+          {activeSection === "tools" && (
+            <>
+              <AiAgent />
+              {user.role === "analyst" && <AnalystTools />}
+              {user.role === "investigator" && <InvestigatorTools />}
+              {user.role === "admin" && <AdminTools />}
+            </>
+          )}
         </main>
       </div>
 
-      {selectedTx && <TransactionDrawer tx={selectedTx} onClose={() => setSelectedTx(null)} onUpdated={loadData} canModerate={user.role === "investigator" || user.role === "admin"} />}
-    </div>
+      {selectedTx && <TransactionDrawer tx={selectedTx} onClose={() => setSelectedTx(null)} onUpdated={loadData} canModerate={user.role === "investigator" || user.role === "admin"} canTriage={user.role === "analyst"} />}
+      </div>
+
+      <AgentCursor />
+    </AgentProvider>
   );
 }

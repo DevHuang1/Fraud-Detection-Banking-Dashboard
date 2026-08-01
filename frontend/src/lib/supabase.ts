@@ -292,14 +292,41 @@ class SupabaseService {
     return (data || []) as Alert[];
   }
 
-  async getUserProfile(userId: string): Promise<{ role: string | null; full_name: string | null; email: string | null } | null> {
+  async updateAlert(id: number, updates: Partial<Alert>) {
+    const { data, error } = await this.getClient()
+      .from("alerts")
+      .update(updates)
+      .eq("id", id)
+      .select()
+      .single();
+    if (error) return { success: false, error: error.message };
+    return { success: true, data };
+  }
+
+  async searchTransactions(query: string, limit = 50): Promise<Transaction[]> {
+    const q = query.trim();
+    if (!q) return [];
+    try {
+      const { data } = await this.getClient()
+        .from("transactions")
+        .select("*")
+        .or(`merchant.ilike.%${q}%,account_id.ilike.%${q}%,account_name.ilike.%${q}%,device_id.ilike.%${q}%,ip_address.ilike.%${q}%,transaction_id.ilike.%${q}%`)
+        .order("timestamp", { ascending: false })
+        .limit(limit);
+      return (data || []) as Transaction[];
+    } catch {
+      return [];
+    }
+  }
+
+  async getUserProfile(userId: string): Promise<{ role: string | null; full_name: string | null; email: string | null; is_ceo: boolean } | null> {
     try {
       const { data } = await this.getClient()
         .from("user_profiles")
-        .select("role,full_name,email")
+        .select("role,full_name,email,is_ceo")
         .eq("id", userId)
         .single();
-      return data as { role: string | null; full_name: string | null; email: string | null } | null;
+      return data as { role: string | null; full_name: string | null; email: string | null; is_ceo: boolean } | null;
     } catch {
       return null;
     }
@@ -402,12 +429,12 @@ class SupabaseService {
     }
   }
 
-  async listUsers(): Promise<{ id: string; email: string; full_name: string; role: string; created_at: string }[]> {
+  async listUsers(): Promise<{ id: string; email: string; full_name: string; role: string; is_ceo: boolean; created_at: string }[]> {
     const { data } = await this.getClient()
       .from("user_profiles")
       .select("*")
       .order("created_at", { ascending: false });
-    return (data || []) as { id: string; email: string; full_name: string; role: string; created_at: string }[];
+    return (data || []) as { id: string; email: string; full_name: string; role: string; is_ceo: boolean; created_at: string }[];
   }
 
   async updateUserRole(userId: string, role: string) {
@@ -419,6 +446,26 @@ class SupabaseService {
       .single();
     if (error) return { success: false, error: error.message };
     return { success: true, data };
+  }
+
+  async setUserCeo(userId: string, isCeo: boolean) {
+    const { data, error } = await this.getClient()
+      .from("user_profiles")
+      .update({ is_ceo: isCeo })
+      .eq("id", userId)
+      .select()
+      .single();
+    if (error) return { success: false, error: error.message };
+    return { success: true, data };
+  }
+
+  async updateProfileName(userId: string, fullName: string): Promise<{ success: boolean; error?: string }> {
+    const { error } = await this.getClient()
+      .from("user_profiles")
+      .update({ full_name: fullName })
+      .eq("id", userId);
+    if (error) return { success: false, error: error.message };
+    return { success: true };
   }
 
   async createUserProfile(email: string, fullName: string, role: string): Promise<{ success: boolean; error?: string; id?: string }> {

@@ -44,6 +44,7 @@ export const WORKSPACE_NAV: Record<Role, NavItem[]> = {
     { label: "Analytics", icon: "barChart", key: "analytics" },
     { label: "Detection Flow", icon: "nodes", key: "flow" },
     { label: "Reports", icon: "fileText", key: "reports" },
+    { label: "Tools", icon: "bot", key: "tools" },
   ],
   investigator: [
     { label: "Overview", icon: "dashboard", key: "overview" },
@@ -53,6 +54,7 @@ export const WORKSPACE_NAV: Record<Role, NavItem[]> = {
     { label: "Detection Flow", icon: "nodes", key: "flow" },
     { label: "Rules Engine", icon: "settings", key: "rules" },
     { label: "Reports", icon: "fileText", key: "reports" },
+    { label: "Tools", icon: "bot", key: "tools" },
   ],
   admin: [
     { label: "Overview", icon: "dashboard", key: "overview" },
@@ -63,10 +65,17 @@ export const WORKSPACE_NAV: Record<Role, NavItem[]> = {
     { label: "Rules Engine", icon: "settings", key: "rules" },
     { label: "Reports", icon: "fileText", key: "reports" },
     { label: "Team", icon: "users", key: "team" },
+    { label: "Tools", icon: "bot", key: "tools" },
   ],
 };
 
 export function homePathForRole(role: Role | null | undefined): string {
   if (role && VALID_ROLES.includes(role)) return ROLE_HOME[role];
   return "/";
+}
+
+export function displayRoleLabel(isCeo: boolean | undefined, role: Role | null | undefined): string {
+  if (isCeo) return "CEO";
+  if (role && VALID_ROLES.includes(role)) return ROLE_LABEL[role];
+  return "User";
 }

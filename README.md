@@ -193,6 +193,7 @@ RBAC is enforced end-to-end:
 ├── python-ml-service/
 │   ├── app.py                   # FastAPI: /predict, /api/stats, /api/transactions, PATCH status
 │   ├── seed_fast.py             # Seed script: 100 users, 25K+ transactions
+│   ├── simulate_live.py         # Continuous generator: real-time synthetic transactions
 │   ├── backfill_user_data.py    # Idempotent user/account backfill
 │   ├── backfill_rule_triggers.py# Idempotent rule-trigger backfill
 │   ├── model.h5                 # Keras trained model (PaySim)
@@ -231,3 +232,33 @@ Run `seed_fast.py` to populate the database with realistic synthetic data:
 - **300 alerts** and **100+ fraud cases** assigned to investigators
 
 After seeding, run `npm run seed:auth` in `frontend/` to create one sign-in-able Supabase Auth account per role with matching `user_profiles` rows and role metadata.
+
+## Live Simulation
+
+`simulate_live.py` keeps the dashboard alive by generating transactions from the existing accounts, scoring them, and inserting them. Because `transactions` is published to `supabase_realtime`, every insert streams live into the feed.
+
+```bash
+cd python-ml-service
+python3 simulate_live.py                        # ~500 tx/hour (default)
+```
+
+Options:
+- `--per-hour N` target throughput (default 500)
+- `--once --count N` insert one burst and exit (cron-friendly)
+- `--fraud-rate 0.05` fraction of transactions injected as fraud (caught + blocked)
+- `--use-ensemble --ml-url http://localhost:5001` score via the running ML service instead of the in-process scorer
+- `--no-balances`, `--no-alerts`, `--dry-run`, `--verbose`
+
+For **500 new transactions every hour**, run it as a daemon (streams small batches throughout the hour so the feed animates):
+
+```bash
+nohup python3 simulate_live.py --per-hour 500 >> simulate_live.log 2>&1 &
+```
+
+or via cron (one burst per hour):
+
+```
+0 * * * * cd /path/to/python-ml-service && SUPABASE_SERVICE_KEY=... python3 simulate_live.py --once --count 500 >> simulate_live.log 2>&1
+```
+
+> **Note on scoring:** the bundled `model.h5` is trained on an SDV-masked PaySim variant with no learnable fraud signature (evaluation shows ~6% recall, near-zero probabilities), which is why the original seed faked `ml_fraud_probability`. `simulate_live.py` therefore uses an interpretable ML-style scorer (amount, channel, type, merchant-category risk) that reliably flags injected fraud; use `--use-ensemble` once a real model is deployed.

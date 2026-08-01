@@ -2,11 +2,55 @@
 
 import { useState, useEffect } from "react";
 import { Line, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
-import { supabase, type Transaction } from "@/lib/supabase";
+import { supabase } from "@/lib/supabase";
+import type { Role } from "@/lib/roles";
+import {
+  COLORS,
+  SCORE_COLORS,
+  RULE_COLORS,
+  type TrendPoint,
+  type GeoPoint,
+  type ChannelPoint,
+  type DevicePoint,
+  type MerchantPoint,
+  type MlPoint,
+  type RiskBucketPoint,
+  type RulePoint,
+  type AmountBucketPoint,
+  type HourPoint,
+  type AccountPoint,
+  type CategoryPoint,
+  aggregateTrend,
+  aggregateGeo,
+  aggregateChannel,
+  aggregateMerchants,
+  aggregateMlScores,
+  aggregateDevices,
+  aggregateRiskBuckets,
+  aggregateRules,
+  aggregateAmounts,
+  aggregateHours,
+  aggregateAccounts,
+  aggregateCategories,
+} from "@/lib/analytics";
 
-const COLORS = ["#00f0ff", "#8b5cf6", "#ec4899", "#f59e0b", "#22ff8b", "#3b82f6", "#f472b6", "#a3e635"];
+export type WidgetKey =
+  | "trend" | "anomaly" | "riskDist" | "geo" | "velocity" | "devices"
+  | "amount" | "categories" | "hour" | "rules" | "accounts" | "merchants";
 
-const SCORE_COLORS = ["#22ff8b", "#00f0ff", "#f59e0b", "#ef4444", "#ef4444"];
+const ROLE_WIDGETS: Record<Role, WidgetKey[]> = {
+  user: ["trend"],
+  analyst: ["trend", "anomaly", "riskDist", "geo", "rules", "accounts", "devices"],
+  investigator: ["trend", "riskDist", "geo", "velocity", "amount", "categories", "hour", "merchants"],
+  admin: ["trend", "anomaly", "riskDist", "geo", "velocity", "devices", "amount", "categories", "hour", "rules", "accounts", "merchants"],
+};
+
+const SUMMARY_WIDGETS: Record<Role, WidgetKey[]> = {
+  user: ["trend"],
+  analyst: ["trend", "geo", "riskDist", "anomaly", "rules"],
+  investigator: ["trend", "geo", "riskDist", "categories"],
+  admin: ["trend", "geo", "riskDist", "velocity", "rules"],
+};
 
 interface TooltipEntry {
   color: string;
@@ -28,43 +72,6 @@ function CustomTooltip({ active, payload, label }: { active?: boolean; payload?:
   );
 }
 
-interface TrendPoint {
-  day: string;
-  fraud: number;
-  normal: number;
-  score: number;
-}
-
-interface GeoPoint {
-  region: string;
-  name?: string;
-  value: number;
-  pct: number;
-}
-
-interface ChannelPoint {
-  channel: string;
-  approved: number;
-  blocked: number;
-}
-
-interface DevicePoint {
-  name: string;
-  value: number;
-}
-
-interface MerchantPoint {
-  merchant: string;
-  count: number;
-  blocked: number;
-  score: number;
-}
-
-interface MlPoint {
-  range: string;
-  count: number;
-}
-
 interface WidgetProps {
   title: string;
   subtitle: string;
@@ -84,123 +91,27 @@ function Widget({ title, subtitle, className, children }: WidgetProps) {
   );
 }
 
-function aggregateTrend(txns: Transaction[]) {
-  const buckets: Record<string, { fraud: number; normal: number; scoreSum: number; count: number }> = {};
-  const keys: string[] = [];
-  const now = new Date();
-  for (let i = 6; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
-    const key = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
-    keys.push(key);
-    buckets[key] = { fraud: 0, normal: 0, scoreSum: 0, count: 0 };
-  }
-  for (const t of txns) {
-    const d = new Date(t.timestamp);
-    const key = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
-    if (!buckets[key]) continue;
-    if (t.is_fraud) buckets[key].fraud++;
-    else buckets[key].normal++;
-    buckets[key].scoreSum += t.risk_score || 0;
-    buckets[key].count++;
-  }
-  return keys.map((key) => {
-    const b = buckets[key];
-    const [, m, day] = key.split("-");
-    return {
-      day: `${m}/${day}`,
-      fraud: b.fraud,
-      normal: b.normal,
-      score: b.count > 0 ? Math.round(b.scoreSum / b.count) : 0,
-    };
-  });
-}
-
-function aggregateGeo(txns: Transaction[]) {
-  const counts: Record<string, number> = {};
-  let total = 0;
-  for (const t of txns) {
-    if (t.is_suspicious || t.is_fraud) {
-      const r = t.region || "Unknown";
-      counts[r] = (counts[r] || 0) + 1;
-      total++;
-    }
-  }
-  if (total === 0) return [];
-  return Object.entries(counts)
-    .map(([region, value]) => ({ region, name: region, value, pct: Math.round((value / total) * 100) }))
-    .sort((a, b) => b.value - a.value);
-}
-
-function aggregateChannel(txns: Transaction[]) {
-  const buckets: Record<string, { approved: number; blocked: number }> = {};
-  for (const t of txns) {
-    const ch = t.channel || "Other";
-    if (!buckets[ch]) buckets[ch] = { approved: 0, blocked: 0 };
-    if (t.status === "blocked" || t.is_fraud) buckets[ch].blocked++;
-    else buckets[ch].approved++;
-  }
-  return Object.entries(buckets).map(([channel, v]) => ({ channel, ...v }));
-}
-
-function aggregateMerchants(txns: Transaction[]) {
-  const map: Record<string, { count: number; scoreSum: number; blocked: number }> = {};
-  for (const t of txns) {
-    const m = t.merchant || "Unknown";
-    if (!map[m]) map[m] = { count: 0, scoreSum: 0, blocked: 0 };
-    map[m].count++;
-    map[m].scoreSum += t.risk_score || 0;
-    if (t.status === "blocked" || t.is_fraud) map[m].blocked++;
-  }
-  return Object.entries(map)
-    .map(([merchant, v]) => ({
-      merchant,
-      count: v.count,
-      blocked: v.blocked,
-      score: v.count > 0 ? Math.round(v.scoreSum / v.count) : 0,
-    }))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 6);
-}
-
-function aggregateMlScores(txns: Transaction[]) {
-  const buckets = [0, 0, 0, 0, 0];
-  const labels = ["0-20", "20-40", "40-60", "60-80", "80-100"];
-  for (const t of txns) {
-    const p = (t.ml_fraud_probability || 0) * 100;
-    const idx = Math.min(4, Math.floor(p / 20));
-    buckets[idx]++;
-  }
-  return labels.map((range, i) => ({ range, count: buckets[i] }));
-}
-
-function aggregateDevices(txns: Transaction[]) {
-  const freq: Record<string, number> = {};
-  const suspicious = new Set<string>();
-  for (const t of txns) {
-    if (!t.device_id) continue;
-    freq[t.device_id] = (freq[t.device_id] || 0) + 1;
-    if (t.is_fraud) suspicious.add(t.device_id);
-  }
-  const all = Object.keys(freq);
-  if (all.length === 0) return [];
-  const total = all.length;
-  const pct = (n: number) => Math.round((n / total) * 100);
-  const known = all.filter((id) => !suspicious.has(id) && freq[id] > 1).length;
-  const fresh = all.filter((id) => !suspicious.has(id) && freq[id] === 1).length;
-  return [
-    { name: "Known Devices", value: pct(known) },
-    { name: "New Devices", value: pct(fresh) },
-    { name: "Suspicious", value: pct(suspicious.size) },
-  ];
-}
-
-export default function AnalyticsWidgets({ variant = "full" }: { variant?: "full" | "summary" }) {
+export default function AnalyticsWidgets({
+  variant = "full",
+  role = "investigator",
+  widgets,
+}: {
+  variant?: "full" | "summary";
+  role?: Role;
+  widgets?: WidgetKey[];
+}) {
   const [trendData, setTrendData] = useState<TrendPoint[]>([]);
   const [geoData, setGeoData] = useState<GeoPoint[]>([]);
   const [channelData, setChannelData] = useState<ChannelPoint[]>([]);
   const [deviceData, setDeviceData] = useState<DevicePoint[]>([]);
   const [merchantData, setMerchantData] = useState<MerchantPoint[]>([]);
   const [mlData, setMlData] = useState<MlPoint[]>([]);
+  const [riskData, setRiskData] = useState<RiskBucketPoint[]>([]);
+  const [ruleData, setRuleData] = useState<RulePoint[]>([]);
+  const [amountData, setAmountData] = useState<AmountBucketPoint[]>([]);
+  const [hourData, setHourData] = useState<HourPoint[]>([]);
+  const [accountData, setAccountData] = useState<AccountPoint[]>([]);
+  const [categoryData, setCategoryData] = useState<CategoryPoint[]>([]);
 
   useEffect(() => {
     let active = true;
@@ -212,6 +123,12 @@ export default function AnalyticsWidgets({ variant = "full" }: { variant?: "full
       setDeviceData(aggregateDevices(txns));
       setMerchantData(aggregateMerchants(txns));
       setMlData(aggregateMlScores(txns));
+      setRiskData(aggregateRiskBuckets(txns));
+      setRuleData(aggregateRules(txns));
+      setAmountData(aggregateAmounts(txns));
+      setHourData(aggregateHours(txns));
+      setAccountData(aggregateAccounts(txns));
+      setCategoryData(aggregateCategories(txns));
     });
     return () => {
       active = false;
@@ -219,10 +136,14 @@ export default function AnalyticsWidgets({ variant = "full" }: { variant?: "full
   }, []);
 
   const isFull = variant === "full";
+  const roleWidgets = widgets && widgets.length > 0 ? widgets : ROLE_WIDGETS[role] || [];
+  const summaryWidgets = SUMMARY_WIDGETS[role] || [];
+  const visible = (key: WidgetKey) => roleWidgets.includes(key) && (isFull || summaryWidgets.includes(key));
 
   return (
     <>
-      <Widget title="Fraud Trend Analysis" subtitle="Daily fraud incidents & risk score" className="lg:col-span-2 delay-4 scan-line">
+      {visible("trend") && (
+        <Widget title="Fraud Trend Analysis" subtitle="Daily fraud incidents & risk score" className="lg:col-span-2 delay-4 scan-line">
         <div className="h-56">
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={trendData}>
@@ -248,8 +169,9 @@ export default function AnalyticsWidgets({ variant = "full" }: { variant?: "full
           </ResponsiveContainer>
         </div>
       </Widget>
+      )}
 
-      {isFull && (
+      {visible("anomaly") && (
         <Widget title="Anomaly Detection" subtitle="ML fraud probability distribution" className="delay-5 scan-line">
           <div className="h-56">
             <ResponsiveContainer width="100%" height="100%">
@@ -269,7 +191,25 @@ export default function AnalyticsWidgets({ variant = "full" }: { variant?: "full
         </Widget>
       )}
 
-      <Widget title="Suspicious Geography" subtitle="High-risk regions" className="delay-5 scan-line">
+      {visible("riskDist") && (
+        <Widget title="Risk Score Distribution" subtitle="Transaction volume by risk bucket" className="lg:col-span-2 delay-5 scan-line">
+          <div className="h-56">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={riskData.length > 0 ? riskData : []}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                <XAxis dataKey="range" stroke="#64748b" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+                <YAxis stroke="#64748b" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} allowDecimals={false} />
+                <Tooltip content={<CustomTooltip />} />
+                <Bar dataKey="normal" stackId="r" name="Normal" fill="#00f0ff" />
+                <Bar dataKey="fraud" stackId="r" name="Fraud" fill="#ef4444" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </Widget>
+      )}
+
+      {visible("geo") && (
+        <Widget title="Suspicious Geography" subtitle="High-risk regions" className="delay-5 scan-line">
         <div className="h-60">
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
@@ -292,8 +232,10 @@ export default function AnalyticsWidgets({ variant = "full" }: { variant?: "full
           ))}
         </div>
       </Widget>
+      )}
 
-      <Widget title="Transaction Velocity" subtitle="Channel breakdown" className="lg:col-span-2 delay-5 scan-line">
+      {visible("velocity") && (
+        <Widget title="Transaction Velocity" subtitle="Channel breakdown" className="lg:col-span-2 delay-5 scan-line">
         <div className="h-56">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={channelData.length > 0 ? channelData : []} layout="vertical">
@@ -307,8 +249,10 @@ export default function AnalyticsWidgets({ variant = "full" }: { variant?: "full
           </ResponsiveContainer>
         </div>
       </Widget>
+      )}
 
-      <Widget title="Device Fingerprints" subtitle="Known vs suspicious devices" className="delay-6 scan-line">
+      {visible("devices") && (
+        <Widget title="Device Fingerprints" subtitle="Known vs suspicious devices" className="delay-6 scan-line">
         <div className="h-60 flex flex-col items-center justify-center">
           <div className="relative w-44 h-44">
             <svg viewBox="0 0 40 40" className="w-full h-full -rotate-90">
@@ -341,8 +285,100 @@ export default function AnalyticsWidgets({ variant = "full" }: { variant?: "full
           </div>
         </div>
       </Widget>
+      )}
 
-      {isFull && (
+      {visible("amount") && (
+        <Widget title="Fraud by Amount" subtitle="Transaction count & fraud per amount range" className="lg:col-span-2 delay-6 scan-line">
+          <div className="h-56">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={amountData.length > 0 ? amountData : []}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                <XAxis dataKey="range" stroke="#64748b" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+                <YAxis stroke="#64748b" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} allowDecimals={false} />
+                <Tooltip content={<CustomTooltip />} />
+                <Bar dataKey="normal" stackId="a" name="Normal" fill="#00f0ff" />
+                <Bar dataKey="fraud" stackId="a" name="Fraud" fill="#ef4444" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </Widget>
+      )}
+
+      {visible("categories") && (
+        <Widget title="Merchant Categories" subtitle="Fraud vs normal by category" className="delay-6 scan-line">
+          <div className="h-56">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={categoryData.length > 0 ? categoryData : []} layout="vertical" margin={{ left: 0, right: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" horizontal={false} />
+                <XAxis type="number" stroke="#64748b" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} allowDecimals={false} />
+                <YAxis dataKey="category" type="category" width={90} stroke="#64748b" tick={{ fontSize: 10 }} axisLine={false} tickLine={false} />
+                <Tooltip content={<CustomTooltip />} />
+                <Bar dataKey="normal" stackId="c" name="Normal" fill="#00f0ff" />
+                <Bar dataKey="fraud" stackId="c" name="Fraud" fill="#ef4444" radius={[0, 4, 4, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </Widget>
+      )}
+
+      {visible("hour") && (
+        <Widget title="Fraud by Hour of Day" subtitle="Activity pattern & fraud hotspots" className="lg:col-span-2 delay-6 scan-line">
+          <div className="h-56">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={hourData.length > 0 ? hourData : []}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                <XAxis dataKey="hour" stroke="#64748b" tick={{ fontSize: 10 }} axisLine={false} tickLine={false} interval={3} />
+                <YAxis stroke="#64748b" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} allowDecimals={false} />
+                <Tooltip content={<CustomTooltip />} />
+                <Bar dataKey="normal" stackId="h" name="Normal" fill="#00f0ff" />
+                <Bar dataKey="fraud" stackId="h" name="Fraud" fill="#ef4444" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </Widget>
+      )}
+
+      {visible("rules") && (
+        <Widget title="Rule Trigger Frequency" subtitle="Most-firing fraud rules by severity" className="delay-6 scan-line">
+          <div className="h-56">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={ruleData.length > 0 ? ruleData : []} layout="vertical" margin={{ left: 0, right: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" horizontal={false} />
+                <XAxis type="number" stroke="#64748b" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} allowDecimals={false} />
+                <YAxis dataKey="rule" type="category" width={110} stroke="#64748b" tick={{ fontSize: 10 }} axisLine={false} tickLine={false} />
+                <Tooltip content={<CustomTooltip />} />
+                <Bar dataKey="count" name="Triggers" radius={[0, 4, 4, 0]}>
+                  {ruleData.map((d: RulePoint, i: number) => (
+                    <Cell key={i} fill={RULE_COLORS[d.severity] || "#00f0ff"} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </Widget>
+      )}
+
+      {visible("accounts") && (
+        <Widget title="Top High-Risk Accounts" subtitle="Accounts with most suspicious activity" className="delay-6 scan-line">
+          <div className="h-56">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={accountData.length > 0 ? accountData : []} margin={{ left: 0, right: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                <XAxis dataKey="account" stroke="#64748b" tick={{ fontSize: 9 }} axisLine={false} tickLine={false} />
+                <YAxis stroke="#64748b" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} allowDecimals={false} />
+                <Tooltip content={<CustomTooltip />} />
+                <Bar dataKey="count" name="Suspicious" radius={[4, 4, 0, 0]}>
+                  {accountData.map((_: AccountPoint, i: number) => (
+                    <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </Widget>
+      )}
+
+      {visible("merchants") && (
         <Widget title="Top Merchants" subtitle="Highest-traffic merchants by avg risk" className="lg:col-span-2 delay-6 scan-line">
           <div className="h-56">
             <ResponsiveContainer width="100%" height="100%">

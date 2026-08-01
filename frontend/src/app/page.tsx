@@ -8,7 +8,7 @@ import BankingOverview from "@/components/dashboard/BankingOverview";
 import TransactionHistory from "@/components/dashboard/TransactionHistory";
 import TransferView from "@/components/transfer/TransferView";
 import { useAuth } from "@/context/AuthContext";
-import { ROLE_COLOR, ROLE_LABEL, homePathForRole } from "@/lib/roles";
+import { ROLE_COLOR, displayRoleLabel, homePathForRole } from "@/lib/roles";
 
 export default function CustomerPortal() {
   const [view, setView] = useState<"overview" | "transfer" | "history">("overview");
@@ -61,7 +61,7 @@ export default function CustomerPortal() {
             <div className="flex items-center gap-2">
               <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#1e293b]/50 border border-[#334155]">
                 <span className="w-1.5 h-1.5 rounded-full" style={{ background: roleColors.dot }} />
-                <span className="text-xs font-medium" style={{ color: roleColors.text }}>{user?.role ? ROLE_LABEL[user.role] : "User"}</span>
+                <span className="text-xs font-medium" style={{ color: roleColors.text }}>{displayRoleLabel(user?.is_ceo, user?.role)}</span>
               </div>
               <button
                 onClick={() => { logout(); router.push("/login"); }}

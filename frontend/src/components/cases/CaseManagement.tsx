@@ -1,9 +1,26 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { Icons } from "@/components/ui/Icons";
-import { supabase, type FraudCase } from "@/lib/supabase";
+import { supabase, type FraudCase, type Transaction } from "@/lib/supabase";
 import { useAuth } from "@/context/AuthContext";
+
+function relativeTime(ts: string): string {
+  const diff = Date.now() - new Date(ts).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
+function formatDate(ts: string): string {
+  return new Date(ts).toLocaleString(undefined, {
+    year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+  });
+}
 
 const severityColors: Record<string, string> = {
   critical: "#ef4444", high: "#f59e0b", medium: "#3b82f6", low: "#22c55e",
@@ -22,7 +39,7 @@ const fraudTypes = [
 ];
 
 interface Props {
-  readOnly?: boolean;
+  canAdjudicate?: boolean;
 }
 
 interface CaseForm {
@@ -34,6 +51,9 @@ interface CaseForm {
   assigned_to: string;
 }
 
+const allStatuses: FraudCase["status"][] = ["open", "investigating", "resolved", "dismissed"];
+const triageStatuses: FraudCase["status"][] = ["open", "investigating"];
+
 const emptyForm: CaseForm = {
   title: "",
   description: "",
@@ -43,7 +63,7 @@ const emptyForm: CaseForm = {
   assigned_to: "",
 };
 
-export default function CaseManagement({ readOnly = false }: Props) {
+export default function CaseManagement({ canAdjudicate = true }: Props) {
   const { user } = useAuth();
   const [cases, setCases] = useState<FraudCase[]>([]);
   const [open, setOpen] = useState(false);
@@ -51,6 +71,8 @@ export default function CaseManagement({ readOnly = false }: Props) {
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [assignees, setAssignees] = useState<{ id: string; full_name: string; email: string; role: string }[]>([]);
+  const [userMap, setUserMap] = useState<Record<string, string>>({});
+  const [selected, setSelected] = useState<FraudCase | null>(null);
 
   const loadCases = useCallback(() => {
     supabase.getCases().then(setCases);
@@ -58,9 +80,12 @@ export default function CaseManagement({ readOnly = false }: Props) {
 
   useEffect(() => {
     loadCases();
-    supabase.listUsers().then((rows) =>
-      setAssignees(rows.filter((u) => u.role === "investigator" || u.role === "admin")),
-    );
+    supabase.listUsers().then((rows) => {
+      setAssignees(rows.filter((u) => u.role === "investigator" || u.role === "admin"));
+      setUserMap(Object.fromEntries(rows.map((u) => [u.id, u.full_name || u.email])));
+    });
+    const unsub = supabase.subscribeToChannel("fraud_cases", "INSERT", () => loadCases());
+    return unsub;
   }, [loadCases]);
 
   const updateStatus = async (id: number, status: FraudCase["status"]) => {
@@ -68,10 +93,16 @@ export default function CaseManagement({ readOnly = false }: Props) {
     await supabase.updateCase(id, { status });
   };
 
-  const markFraud = async (id: number, val: boolean) => {
+  const markFraud = async (c: FraudCase, val: boolean) => {
     const status: FraudCase["status"] = val ? "resolved" : "dismissed";
-    setCases((prev) => prev.map((c) => (c.id === id ? { ...c, is_confirmed_fraud: val, status } : c)));
-    await supabase.updateCase(id, { is_confirmed_fraud: val, status });
+    setCases((prev) => prev.map((x) => (x.id === c.id ? { ...x, is_confirmed_fraud: val, status } : x)));
+    if (c.transaction_id) {
+      const txUpdates: Partial<Pick<Transaction, "status" | "is_fraud" | "is_suspicious" | "risk_level">> = val
+        ? { status: "blocked", is_fraud: true, is_suspicious: true, risk_level: "critical" }
+        : { status: "approved", is_fraud: false, is_suspicious: false };
+      await supabase.updateTransactionStatus(c.transaction_id, txUpdates);
+    }
+    await supabase.updateCase(c.id, { is_confirmed_fraud: val, status });
   };
 
   const createCase = async (e: React.FormEvent) => {
@@ -101,6 +132,8 @@ export default function CaseManagement({ readOnly = false }: Props) {
   const inputCls = "w-full h-10 px-3 rounded-lg text-xs bg-[#1e293b] border border-[#334155] text-white outline-none focus:border-[#00f0ff]/30 placeholder-[#4a5568]";
   const labelCls = "block text-[10px] uppercase tracking-wider text-[#64748b] mb-1";
 
+  const activeCases = cases.filter((c) => c.status === "open" || c.status === "investigating");
+
   return (
     <div className="glass-neon rounded-2xl animate-slide-up delay-6">
       <div className="p-5 pb-3 flex items-center justify-between">
@@ -109,13 +142,11 @@ export default function CaseManagement({ readOnly = false }: Props) {
             <h3 className="text-base font-semibold text-white">Case Management</h3>
             <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-[#f59e0b]/10 text-[#f59e0b] border border-[#f59e0b]/20">ACTIVE</span>
           </div>
-          <p className="text-xs text-[#64748b] mt-0.5 font-mono">{cases.length} cases requiring review</p>
+          <p className="text-xs text-[#64748b] mt-0.5 font-mono">{activeCases.length} cases requiring review</p>
         </div>
         <button
-          disabled={readOnly}
-          title={readOnly ? "Analysts cannot open new cases" : "Create a new case"}
           onClick={() => { setOpen(true); setNotice(null); }}
-          className="h-9 px-4 rounded-xl bg-gradient-to-r from-[#3b82f6] to-[#00f0ff] text-white text-xs font-semibold flex items-center gap-1.5 shadow-lg hover:shadow-blue-500/20 transition-shadow disabled:opacity-40 disabled:cursor-not-allowed"
+          className="h-9 px-4 rounded-xl bg-gradient-to-r from-[#3b82f6] to-[#00f0ff] text-white text-xs font-semibold flex items-center gap-1.5 shadow-lg hover:shadow-blue-500/20 transition-shadow"
         >
           <Icons.plus size={14} /> New Case
         </button>
@@ -127,10 +158,11 @@ export default function CaseManagement({ readOnly = false }: Props) {
         </div>
       )}
 
-      {open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setOpen(false)} />
-          <form onSubmit={createCase} className="relative w-full max-w-lg rounded-2xl border border-[#334155] p-6 space-y-4" style={{ background: "#0a0e1a" }}>
+      {open &&
+        createPortal(
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setOpen(false)} />
+            <form onSubmit={createCase} className="relative w-full max-w-lg max-h-[85vh] overflow-y-auto rounded-2xl border border-[#334155] p-6 space-y-4" style={{ background: "#0a0e1a" }}>
             <div className="flex items-center justify-between">
               <div>
                 <h4 className="text-sm font-semibold text-white">Open New Fraud Case</h4>
@@ -174,7 +206,7 @@ export default function CaseManagement({ readOnly = false }: Props) {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className={labelCls}>Amount at Risk</label>
-                <input type="number" min="0" value={form.amount_at_risk} onChange={(e) => setForm({ ...form, amount_at_risk: e.target.value })} placeholder="0.00" className={inputCls} />
+                <input type="number" min="0" step="0.01" value={form.amount_at_risk} onChange={(e) => setForm({ ...form, amount_at_risk: e.target.value })} placeholder="0.00" className={inputCls} />
               </div>
               <div>
                 <label className={labelCls}>Assign To</label>
@@ -196,8 +228,9 @@ export default function CaseManagement({ readOnly = false }: Props) {
               </button>
             </div>
           </form>
-        </div>
-      )}
+          </div>,
+          document.body,
+        )}
 
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
@@ -212,14 +245,14 @@ export default function CaseManagement({ readOnly = false }: Props) {
             </tr>
           </thead>
           <tbody>
-            {cases.map((c) => (
-              <tr key={c.id} className="border-b border-[#1e293b]/50 hover:bg-white/[0.02] transition-colors relative">
+            {activeCases.map((c) => (
+              <tr key={c.id} onClick={() => setSelected(c)} className="border-b border-[#1e293b]/50 hover:bg-white/[0.02] transition-colors relative cursor-pointer">
                 <td className="px-4 py-3.5">
                   <span className="font-mono text-xs text-[#94a3b8]">{c.case_number}</span>
                 </td>
                 <td className="px-4 py-3.5">
                   <span className="text-white text-xs font-medium">{c.title}</span>
-                  <span className="block text-[10px] text-[#64748b]">{c.fraud_type}</span>
+                  <span className="block text-[10px] text-[#64748b]">{c.fraud_type} · {relativeTime(c.created_at)}</span>
                 </td>
                 <td className="px-4 py-3.5">
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold capitalize" style={{ background: `${severityColors[c.severity]}15`, color: severityColors[c.severity] }}>
@@ -228,7 +261,7 @@ export default function CaseManagement({ readOnly = false }: Props) {
                   </span>
                 </td>
                 <td className="px-4 py-3.5">
-                  {readOnly ? (
+                  {!canAdjudicate && (c.status === "resolved" || c.status === "dismissed") ? (
                     <span className={`inline-flex px-2.5 py-1 rounded-full text-[11px] font-semibold capitalize ${statusStyles[c.status]}`}>
                       {c.status}
                     </span>
@@ -236,12 +269,13 @@ export default function CaseManagement({ readOnly = false }: Props) {
                     <select
                       value={c.status}
                       onChange={(e) => updateStatus(c.id, e.target.value as FraudCase["status"])}
-                      className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border-0 outline-none cursor-pointer ${statusStyles[c.status]}`}
+                      onClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => e.stopPropagation()}
+                      className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border-0 outline-none cursor-pointer bg-[#0a0e1a] ${statusStyles[c.status]}`}
                     >
-                      <option value="open">Open</option>
-                      <option value="investigating">Investigating</option>
-                      <option value="resolved">Resolved</option>
-                      <option value="dismissed">Dismissed</option>
+                      {(canAdjudicate ? allStatuses : triageStatuses).map((s) => (
+                        <option key={s} value={s}>{s}</option>
+                      ))}
                     </select>
                   )}
                 </td>
@@ -249,24 +283,137 @@ export default function CaseManagement({ readOnly = false }: Props) {
                   <span className="text-white font-semibold tabular-nums text-xs">${(c.amount_at_risk || 0).toLocaleString()}</span>
                 </td>
                 <td className="px-4 py-3.5 text-right">
-                  {readOnly ? (
-                    <span className="text-[10px] text-[#64748b] uppercase tracking-wider">View only</span>
-                  ) : (
+                  {canAdjudicate ? (
                     <div className="flex items-center justify-end gap-1.5">
-                      <button onClick={() => markFraud(c.id, true)} className="px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-[#22ff8b]/10 text-[#22ff8b] hover:bg-[#22ff8b]/20 transition-all">
+                      <button onClick={(e) => { e.stopPropagation(); setSelected(c); }} className="w-7 h-7 rounded-lg flex items-center justify-center text-[#64748b] hover:text-white hover:bg-[#1e293b] transition-all" title="View details">
+                        <Icons.eye size={14} />
+                      </button>
+                      <button onClick={(e) => { e.stopPropagation(); markFraud(c, true); }} className="px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-[#22ff8b]/10 text-[#22ff8b] hover:bg-[#22ff8b]/20 transition-all">
                         Confirm
                       </button>
-                      <button onClick={() => markFraud(c.id, false)} className="px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-[#64748b]/10 text-[#64748b] hover:bg-[#64748b]/20 transition-all">
+                      <button onClick={(e) => { e.stopPropagation(); markFraud(c, false); }} className="px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-[#64748b]/10 text-[#64748b] hover:bg-[#64748b]/20 transition-all">
                         Dismiss
                       </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-end gap-1.5">
+                      <button onClick={(e) => { e.stopPropagation(); setSelected(c); }} className="w-7 h-7 rounded-lg flex items-center justify-center text-[#64748b] hover:text-white hover:bg-[#1e293b] transition-all" title="View details">
+                        <Icons.eye size={14} />
+                      </button>
+                      <span className="text-[10px] text-[#64748b] uppercase tracking-wider">
+                        {c.status === "investigating" ? "In review" : "Triage · set to Investigating to escalate"}
+                      </span>
                     </div>
                   )}
                 </td>
               </tr>
             ))}
+            {activeCases.length === 0 && (
+              <tr>
+                <td colSpan={6} className="px-4 py-12 text-center">
+                  <span className="text-xs text-[#64748b]">No active cases — new flagged transactions auto-open cases here.</span>
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
+
+      {selected &&
+        createPortal(
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setSelected(null)} />
+            <div className="relative w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-2xl border border-[#334155]" style={{ background: "#0a0e1a" }}>
+              <div className="sticky top-0 z-10 px-6 py-4 border-b border-[#1e293b] flex items-center justify-between" style={{ background: "#0a0e1a" }}>
+                <div className="flex items-center gap-3">
+                  <span className="font-mono text-xs text-[#94a3b8]">{selected.case_number}</span>
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold capitalize" style={{ background: `${severityColors[selected.severity]}15`, color: severityColors[selected.severity] }}>
+                    <span className="w-1.5 h-1.5 rounded-full" style={{ background: severityColors[selected.severity] }} />
+                    {selected.severity}
+                  </span>
+                  <span className={`inline-flex px-2.5 py-1 rounded-full text-[11px] font-semibold capitalize ${statusStyles[selected.status]}`}>
+                    {selected.status}
+                  </span>
+                </div>
+                <button onClick={() => setSelected(null)} className="w-9 h-9 rounded-lg flex items-center justify-center text-[#64748b] hover:text-white hover:bg-[#1e293b] transition-all">
+                  <Icons.x size={16} />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-5">
+                <div>
+                  <h4 className="text-base font-semibold text-white">{selected.title}</h4>
+                  {selected.is_confirmed_fraud && (
+                    <span className="inline-flex items-center gap-1 mt-2 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-[#22ff8b]/10 text-[#22ff8b]">
+                      <Icons.checkCircle size={12} /> Confirmed fraud
+                    </span>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  <div className="rounded-xl bg-[#111827] border border-[#1e293b] px-4 py-3">
+                    <span className="block text-[10px] uppercase tracking-wider text-[#64748b]">Fraud Type</span>
+                    <span className="block text-sm text-white mt-1 capitalize">{selected.fraud_type.replace(/_/g, " ")}</span>
+                  </div>
+                  <div className="rounded-xl bg-[#111827] border border-[#1e293b] px-4 py-3">
+                    <span className="block text-[10px] uppercase tracking-wider text-[#64748b]">Amount at Risk</span>
+                    <span className="block text-sm text-white mt-1 tabular-nums">${(selected.amount_at_risk || 0).toLocaleString()}</span>
+                  </div>
+                  <div className="rounded-xl bg-[#111827] border border-[#1e293b] px-4 py-3">
+                    <span className="block text-[10px] uppercase tracking-wider text-[#64748b]">Created</span>
+                    <span className="block text-sm text-white mt-1">{formatDate(selected.created_at)}</span>
+                  </div>
+                  <div className="rounded-xl bg-[#111827] border border-[#1e293b] px-4 py-3">
+                    <span className="block text-[10px] uppercase tracking-wider text-[#64748b]">Assigned To</span>
+                    <span className="block text-sm text-white mt-1 truncate">{selected.assigned_to ? (userMap[selected.assigned_to] || selected.assigned_to) : "Unassigned"}</span>
+                  </div>
+                  <div className="rounded-xl bg-[#111827] border border-[#1e293b] px-4 py-3">
+                    <span className="block text-[10px] uppercase tracking-wider text-[#64748b]">Transaction</span>
+                    <span className="block text-sm font-mono text-[#00f0ff] mt-1">#{selected.transaction_id}</span>
+                  </div>
+                  <div className="rounded-xl bg-[#111827] border border-[#1e293b] px-4 py-3">
+                    <span className="block text-[10px] uppercase tracking-wider text-[#64748b]">Status</span>
+                    {!canAdjudicate && (selected.status === "resolved" || selected.status === "dismissed") ? (
+                      <span className={`block mt-1 text-sm font-semibold capitalize ${statusStyles[selected.status]}`}>{selected.status}</span>
+                    ) : (
+                      <select
+                        value={selected.status}
+                        onChange={(e) => { updateStatus(selected.id, e.target.value as FraudCase["status"]); setSelected({ ...selected, status: e.target.value as FraudCase["status"] }); }}
+                        className={`text-sm font-semibold px-2 py-1 rounded-lg border-0 outline-none cursor-pointer bg-[#0a0e1a] ${statusStyles[selected.status]}`}
+                      >
+                        {(canAdjudicate ? allStatuses : triageStatuses).map((s) => (
+                          <option key={s} value={s}>{s}</option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                </div>
+
+                {selected.description && (
+                  <div className="rounded-xl bg-[#111827] border border-[#1e293b] px-4 py-3">
+                    <span className="block text-[10px] uppercase tracking-wider text-[#64748b] mb-2">Description</span>
+                    <p className="text-xs text-[#cbd5e1] leading-relaxed whitespace-pre-wrap">{selected.description}</p>
+                  </div>
+                )}
+              </div>
+
+              {canAdjudicate && (
+                <div className="px-6 py-4 border-t border-[#1e293b] flex items-center justify-end gap-2">
+                  <button onClick={() => setSelected(null)} className="h-10 px-4 rounded-xl bg-[#1e293b] border border-[#334155] text-[#64748b] text-xs hover:text-white transition-all">
+                    Close
+                  </button>
+                  <button onClick={() => markFraud(selected, false)} className="h-10 px-4 rounded-xl bg-[#64748b]/10 text-[#64748b] text-xs font-semibold hover:bg-[#64748b]/20 transition-all">
+                    Dismiss Case
+                  </button>
+                  <button onClick={() => markFraud(selected, true)} className="h-10 px-4 rounded-xl bg-gradient-to-r from-[#22ff8b] to-[#00f0ff] text-[#0a0e1a] text-xs font-semibold shadow-lg hover:shadow-green-500/20 transition-all">
+                    Confirm Fraud
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

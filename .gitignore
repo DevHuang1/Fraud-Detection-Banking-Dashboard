@@ -16,6 +16,12 @@ python-ml-service/sample_data.csv
 .env.local
 .env.*.local
 
+# Demo credentials
+accounts.txt
+
+# ML simulation logs
+python-ml-service/*.log
+
 # OS
 .DS_Store
 Thumbs.db

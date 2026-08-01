@@ -10,6 +10,7 @@ interface User {
   email: string;
   full_name: string | null;
   role: UserRole | null;
+  is_ceo: boolean;
 }
 
 interface AuthContextType {
@@ -19,6 +20,7 @@ interface AuthContextType {
   logout: () => void;
   isAuthenticated: boolean;
   hasRole: (...roles: UserRole[]) => boolean;
+  updateName: (name: string) => Promise<{ error?: string }>;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -28,9 +30,10 @@ const AuthContext = createContext<AuthContextType>({
   logout: () => {},
   isAuthenticated: false,
   hasRole: () => false,
+  updateName: async () => ({}),
 });
 
-async function resolveProfile(userId: string, authUser?: { user_metadata?: unknown; app_metadata?: unknown }): Promise<{ role: UserRole | null; full_name: string | null }> {
+async function resolveProfile(userId: string, authUser?: { user_metadata?: unknown; app_metadata?: unknown }): Promise<{ role: UserRole | null; full_name: string | null; is_ceo: boolean }> {
   const valid = (r: string) => ["user", "analyst", "investigator", "admin"].includes(r);
   const metaRole = (authUser?.user_metadata as { role?: string } | undefined)?.role;
   const appRole = (authUser?.app_metadata as { role?: string } | undefined)?.role;
@@ -42,19 +45,20 @@ async function resolveProfile(userId: string, authUser?: { user_metadata?: unkno
       return {
         role: profile.role && valid(profile.role) ? (profile.role as UserRole) : null,
         full_name: profile.full_name || null,
+        is_ceo: !!profile.is_ceo,
       };
     }
   } catch {}
   try {
     const freshUser = await supabase.getUser();
     const r = (freshUser?.user_metadata as { role?: string } | undefined)?.role;
-    if (r && valid(r)) return { role: r as UserRole, full_name: null };
+    if (r && valid(r)) return { role: r as UserRole, full_name: null, is_ceo: false };
     const ar = (freshUser?.app_metadata as { role?: string } | undefined)?.role;
-    if (ar && valid(ar)) return { role: ar as UserRole, full_name: null };
+    if (ar && valid(ar)) return { role: ar as UserRole, full_name: null, is_ceo: false };
   } catch {}
-  if (metaRole && valid(metaRole)) return { role: metaRole as UserRole, full_name: null };
-  if (appRole && valid(appRole)) return { role: appRole as UserRole, full_name: null };
-  return { role: null, full_name: null };
+  if (metaRole && valid(metaRole)) return { role: metaRole as UserRole, full_name: null, is_ceo: false };
+  if (appRole && valid(appRole)) return { role: appRole as UserRole, full_name: null, is_ceo: false };
+  return { role: null, full_name: null, is_ceo: false };
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -77,6 +81,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             email: authUser.email || "",
             full_name: profile.full_name,
             role: profile.role,
+            is_ceo: profile.is_ceo,
           });
         }
       }
@@ -96,6 +101,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           email: session.user.email || "",
           full_name: profile.full_name,
           role: profile.role,
+          is_ceo: profile.is_ceo,
         });
       } else {
         knownUserIdRef.current = null;
@@ -127,6 +133,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         email: session.user.email || "",
         full_name: profile.full_name,
         role: profile.role,
+        is_ceo: profile.is_ceo,
       };
       setUser(usr);
       return { user: usr };
@@ -144,8 +151,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return roles.includes(user.role);
   }, [user]);
 
+  const updateName = useCallback(async (name: string) => {
+    if (!user?.id) return { error: "Not signed in" };
+    const res = await supabase.updateProfileName(user.id, name);
+    if (!res.success) return { error: res.error || "Failed to update name" };
+    setUser((prev) => (prev ? { ...prev, full_name: name } : prev));
+    return {};
+  }, [user]);
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, isAuthenticated: !!user, hasRole }}>
+    <AuthContext.Provider value={{ user, loading, login, logout, isAuthenticated: !!user, hasRole, updateName }}>
       {children}
     </AuthContext.Provider>
   );

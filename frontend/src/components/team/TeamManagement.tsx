@@ -4,16 +4,20 @@ import { useState, useEffect, useCallback } from "react";
 import { Icons } from "@/components/ui/Icons";
 import { supabase } from "@/lib/supabase";
 import { ROLE_COLOR, ROLE_LABEL, VALID_ROLES, type Role } from "@/lib/roles";
+import { useAuth } from "@/context/AuthContext";
 
 interface UserProfile {
   id: string;
   email: string;
   full_name: string;
   role: string;
+  is_ceo: boolean;
   created_at: string;
 }
 
 export default function TeamManagement() {
+  const { user: currentUser } = useAuth();
+  const isCeo = !!currentUser?.is_ceo;
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -55,7 +59,15 @@ export default function TeamManagement() {
     admin: users.filter((u) => u.role === "admin").length,
   };
 
+  // Only the CEO can manage admin accounts (other admins, the CEO).
+  const isStaffManaged = (u: UserProfile) => u.role === "admin" || u.is_ceo;
+  const canManage = (u: UserProfile) => isCeo || !isStaffManaged(u);
+
   const changeRole = async (user: UserProfile, role: string) => {
+    if (!canManage(user)) {
+      setNotice({ type: "error", text: "Only the CEO can change the role of an admin account" });
+      return;
+    }
     const prev = user.role;
     setUsers((prevUsers) => prevUsers.map((u) => (u.id === user.id ? { ...u, role } : u)));
     const res = await supabase.updateUserRole(user.id, role);
@@ -68,6 +80,10 @@ export default function TeamManagement() {
   };
 
   const removeUser = async (user: UserProfile) => {
+    if (!canManage(user)) {
+      setNotice({ type: "error", text: "Only the CEO can remove an admin account" });
+      return;
+    }
     if (!window.confirm(`Remove ${user.email} from the team?`)) return;
     const res = await supabase.deleteUserProfile(user.id);
     if (!res.success) {
@@ -110,6 +126,7 @@ export default function TeamManagement() {
               <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-[#fbbf24]/10 text-[#fbbf24] border border-[#fbbf24]/20">ADMIN</span>
             </div>
             <p className="text-xs text-[#64748b] mt-0.5 font-mono">Manage analysts, investigators and users</p>
+            {!isCeo && <p className="text-[11px] text-[#f59e0b] mt-0.5">Only the CEO can manage admin accounts</p>}
           </div>
           <div className="flex items-center gap-2.5 flex-wrap">
             <div className="relative">
@@ -164,7 +181,7 @@ export default function TeamManagement() {
               >
                 {VALID_ROLES.map((r) => (
                   <option key={r} value={r}>{ROLE_LABEL[r]}</option>
-                ))}
+                )).filter((o) => isCeo || o.props.value !== "admin")}
               </select>
             </div>
             <div className="flex items-end gap-2">
@@ -226,6 +243,7 @@ export default function TeamManagement() {
               )}
               {filtered.map((u) => {
                 const colors = ROLE_COLOR[(u.role as Role)] || ROLE_COLOR.user;
+                const lockable = !canManage(u);
                 return (
                   <tr key={u.id} className="border-b border-[#1e293b]/50 hover:bg-white/[0.02] transition-colors">
                     <td className="px-5 py-3.5">
@@ -233,7 +251,16 @@ export default function TeamManagement() {
                         <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center text-[11px] font-bold text-white shrink-0">
                           {(u.full_name || u.email).charAt(0).toUpperCase()}
                         </div>
-                        <span className="text-xs font-medium text-white">{u.full_name || "—"}</span>
+                        <div className="min-w-0">
+                          <span className="text-xs font-medium text-white flex items-center gap-1.5">
+                            {u.full_name || "—"}
+                            {u.is_ceo && (
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-[#fbbf24]/15 text-[#fbbf24] border border-[#fbbf24]/25">
+                                <Icons.crown size={10} /> CEO
+                              </span>
+                            )}
+                          </span>
+                        </div>
                       </div>
                     </td>
                     <td className="px-5 py-3.5">
@@ -242,8 +269,10 @@ export default function TeamManagement() {
                     <td className="px-5 py-3.5">
                       <select
                         value={u.role}
+                        disabled={lockable}
                         onChange={(e) => changeRole(u, e.target.value)}
-                        className="text-[11px] font-semibold px-2.5 py-1 rounded-full border-0 outline-none cursor-pointer"
+                        title={lockable ? "Only the CEO can change this account's role" : undefined}
+                        className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border-0 outline-none cursor-pointer ${lockable ? "opacity-60 cursor-not-allowed" : "cursor-pointer"}`}
                         style={{ background: `${colors.dot}15`, color: colors.dot }}
                       >
                         {VALID_ROLES.map((r) => (
@@ -259,8 +288,9 @@ export default function TeamManagement() {
                     <td className="px-5 py-3.5 text-right">
                       <button
                         onClick={() => removeUser(u)}
-                        className="p-1.5 rounded-lg text-[#64748b] hover:text-red-400 hover:bg-red-500/10 transition-all"
-                        title="Remove from team"
+                        disabled={lockable}
+                        className={`p-1.5 rounded-lg transition-all ${lockable ? "text-[#334155] cursor-not-allowed" : "text-[#64748b] hover:text-red-400 hover:bg-red-500/10"}`}
+                        title={lockable ? "Only the CEO can remove an admin account" : "Remove from team"}
                       >
                         <Icons.x size={14} />
                       </button>
